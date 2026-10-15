@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="color-scheme" content="dark"/><title>PO Intelligence Hub — Demo</title><link rel="stylesheet" href="/style.css"/></head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">◈</div><div><strong>PO INTELLIGENCE</strong><small>HUB <span class="tag demo">DEMO v1.7 STUDIO</span></small></div></div>
+    <div class="nav-group-title">WORKSPACE</div>
+    <nav id="nav" class="nav">
+      <button data-page="overview" class="nav-item active"><span>◫</span> Overview <i id="nav-actions"></i></button>
+      <button data-page="market" class="nav-item"><span>◎</span> Market Intelligence</button>
+      <a href="/studio.html" class="nav-item" style="display:block;text-decoration:none;padding:12px;color:#8fd6ff"><span>◈</span> Research Studio v1.7 ↗</a><a href="/v16-demo.html" class="nav-item" style="display:block;text-decoration:none;padding:12px;color:#a4b6d4"><span>▦</span> Legacy CSV Lab ↗</a>
+    </nav>
+    <div class="nav-group-title">SYSTEM</div>
+    <nav class="nav">
+      <button data-page="jobs" class="nav-item"><span>◷</span> Job History</button>
+      <button data-page="settings" class="nav-item"><span>⚙</span> AI & Settings</button>
+    </nav>
+    <div class="sidebar-bottom"><div class="status-dot"></div><div><b>Local workspace</b><small>127.0.0.1 · SQLite</small></div></div>
+  </aside>
+  <div class="main-wrap">
+    <header class="topbar">
+      <button class="mobile-menu" id="menuBtn" aria-label="Toggle menu">☰</button>
+      <div class="crumb"><span>Workspace</span><b>/</b><span id="crumb-page">Overview</span></div>
+      <div class="top-actions"><select id="project-filter" aria-label="Chọn project"></select><span class="live-pill"><span class="status-dot"></span>Local</span><button class="icon-btn" title="Refresh data" id="refreshBtn">↻</button></div>
+    </header>
+    <main id="app"><div class="loading">Đang khởi tạo workspace…</div></main>
+    <footer class="footer">PO Intelligence Hub · Offline-first prototype · Dữ liệu gắn nhãn DEMO chỉ mang tính mô phỏng</footer>
+  </div>
+</div>
+<div id="toast" class="toast" role="status"></div>
+<div id="modalHost"></div>
+<script src="/wizard.js"></script><script src="/reports.js"></script><script src="/market.js"></script><script src="/decision.js"></script><script src="/app.js"></script>
+</body></html>

@@ -1,0 +1,11 @@
+{
+  "type":"object","additionalProperties":false,
+  "required":["run_id","executive_summary","market_insights","opportunities","limitations"],
+  "properties":{
+    "run_id":{"type":"string"},
+    "executive_summary":{"type":"string"},
+    "market_insights":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["finding","evidence_urls","confidence","type"],"properties":{"finding":{"type":"string"},"evidence_urls":{"type":"array","items":{"type":"string"}},"confidence":{"type":"string","enum":["low","medium","high"]},"type":{"type":"string","enum":["fact","inference","hypothesis"]}}}},
+    "opportunities":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["title","why","priority","validation_step"],"properties":{"title":{"type":"string"},"why":{"type":"string"},"priority":{"type":"string","enum":["low","medium","high"]},"validation_step":{"type":"string"}}}},
+    "limitations":{"type":"array","items":{"type":"string"}}
+  }
+}

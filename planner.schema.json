@@ -1,0 +1,167 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "planner_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "brief": {
+      "type": "string"
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "subcategory": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "geos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "monetization": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keywords_include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keywords_exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "research_goals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "monitor_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "competitor_filters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "min_rating": {
+              "type": "number"
+            },
+            "min_reviews": {
+              "type": "integer"
+            },
+            "pricing": {
+              "type": "string"
+            },
+            "genre": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "min_rating",
+            "min_reviews",
+            "pricing",
+            "genre"
+          ]
+        },
+        "cadence_hours": {
+          "type": "integer"
+        },
+        "discovery_depth": {
+          "type": "integer"
+        },
+        "strategy": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "subcategory",
+        "stage",
+        "audience",
+        "geos",
+        "platforms",
+        "monetization",
+        "keywords_include",
+        "keywords_exclude",
+        "research_goals",
+        "sources",
+        "monitor_fields",
+        "competitor_filters",
+        "cadence_hours",
+        "discovery_depth",
+        "strategy",
+        "notes"
+      ]
+    },
+    "research_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "discovery_keywords": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "timeframe": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "planner_id",
+    "name",
+    "brief",
+    "profile",
+    "research_questions",
+    "discovery_keywords",
+    "limitations",
+    "timeframe"
+  ]
+}
