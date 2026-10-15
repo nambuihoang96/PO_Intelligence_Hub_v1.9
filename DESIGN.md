@@ -82,3 +82,7 @@ Buttons have visible hover, active, disabled and keyboard focus states. Focus us
 - Do preserve input after validation errors.
 - Do respect reduced motion and native keyboard behavior.
 - Don't introduce decorative charts or statistics that imply unsupported market conclusions.
+
+## v1.9.1 dashboard extension
+
+The Overview uses a twelve-column grid: a primary chart spans eight columns and attention spans four; comparison tables span the full row. Below 1150px these stack. Below 650px operational KPIs form two columns. Bar comparisons require explicit periods; daily lines require at least four actual dates and do not bridge missing days. The source drawer preserves its run/evidence URL through reload. Blue controls indicate actions, not confidence. Coverage, legacy and stale (>7-day-old period end) labels accompany research context.

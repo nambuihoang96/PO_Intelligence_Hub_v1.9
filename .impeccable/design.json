@@ -1,1 +1,54 @@
-{"schemaVersion":2,"generatedAt":"2026-10-16T01:00:00+07:00","title":"Design System: PO Intelligence Hub","extensions":{"shadows":[],"motion":[{"name":"control-state","value":"background .15s","purpose":"Button state feedback; removed for reduced motion."}],"breakpoints":[{"name":"compact-desktop","value":"950px"},{"name":"mobile","value":"650px"}]},"components":[],"narrative":{"northStar":"Answers with inspectable evidence","overview":"Professional dark workspace for frequent research tasks. A question leads to one result page; source details stay in progressive disclosure.","keyCharacteristics":["Readable dark surfaces","One primary task","Visible uncertainty"],"rules":[{"name":"The Evidence Rule","body":"Status styling never substitutes for the source or uncertainty.","section":"colors"}],"dos":["Preserve input after errors","Keep scope next to the answer"],"donts":["Imply growth through decorative statistics"]}}
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-16T01:00:00+07:00",
+  "title": "Design System: PO Intelligence Hub",
+  "extensions": {
+    "shadows": [],
+    "motion": [
+      {
+        "name": "control-state",
+        "value": "background .15s",
+        "purpose": "Button state feedback; removed for reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-desktop",
+        "value": "950px"
+      },
+      {
+        "name": "mobile",
+        "value": "650px"
+      },
+      {
+        "name": "dashboard-stack",
+        "value": "1150px"
+      }
+    ]
+  },
+  "components": [],
+  "narrative": {
+    "northStar": "Answers with inspectable evidence",
+    "overview": "Professional dark workspace for frequent research tasks. A question leads to one result page; source details stay in progressive disclosure.",
+    "keyCharacteristics": [
+      "Readable dark surfaces",
+      "One primary task",
+      "Visible uncertainty",
+      "Twelve-column Overview with typed metric drill-down"
+    ],
+    "rules": [
+      {
+        "name": "The Evidence Rule",
+        "body": "Status styling never substitutes for the source or uncertainty.",
+        "section": "colors"
+      }
+    ],
+    "dos": [
+      "Preserve input after errors",
+      "Keep scope next to the answer"
+    ],
+    "donts": [
+      "Imply growth through decorative statistics"
+    ]
+  }
+}

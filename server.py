@@ -63,9 +63,9 @@ def con():
 def backup_before_upgrade():
   if not DBPATH.exists():return
   with closing(sqlite3.connect(DBPATH)) as source:
-    if source.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workspace_runs','hub_reports')").fetchone()[0]==2:return
+    if source.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('workspace_runs','hub_reports','intelligence_versions')").fetchone()[0]==3:return
     folder=DBPATH.parent/'backups';folder.mkdir(exist_ok=True)
-    target=folder/('research-pre-v19-'+dt.datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.sqlite3')
+    target=folder/('research-pre-v191-'+dt.datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.sqlite3')
     with closing(sqlite3.connect(target)) as dest:source.backup(dest)
 
 def init():
@@ -1283,7 +1283,7 @@ def studio_codex_start(analysis_id,confirm):
   return {'id':analysis_id,'state':'running'}
 
 class Handler(BaseHTTPRequestHandler):
-  server_version='POHub/1.9'
+  server_version='POHub/1.9.1'
   def log_message(self, fmt, *args): pass
   def answer(self, obj, code=200):
     body=dumps(obj).encode('utf-8')
@@ -1321,6 +1321,9 @@ class Handler(BaseHTTPRequestHandler):
             action=c.execute('SELECT project_id FROM action_registry WHERE id=?',(aid,)).fetchone()
             if not action:raise ValueError('Action không tồn tại')
             return self.answer({'run_id':link[0] if link else None,'research_id':action[0]})
+        if path=='/api/workspace/dashboard':
+          args=dict(urllib.parse.parse_qsl(urllib.parse.urlparse(self.path).query))
+          with LOCK,con() as c:return self.answer(research_workspace.mi.dashboard(c,args))
         if path=='/api/workspace/overview':
           with LOCK,con() as c:return self.answer(research_workspace.overview(c))
         m=re.fullmatch(r'/api/workspace/runs/(\d+)',path)
@@ -1364,7 +1367,7 @@ class Handler(BaseHTTPRequestHandler):
       self.send_response(302);self.send_header('Location','/?view=library' if path=='/v16-demo.html' else '/');self.end_headers();return
     if path in ('/','/index.html','/studio.html','/hub.html'): path='/research.html'
     # No user-controlled traversal and only static html/css/js resources.
-    filenames={'/research.html':'text/html; charset=utf-8','/research.js':'text/javascript; charset=utf-8','/research.css':'text/css; charset=utf-8','/hub.html':'text/html; charset=utf-8','/unified.js':'text/javascript; charset=utf-8','/unified.css':'text/css; charset=utf-8','/legacy.html':'text/html; charset=utf-8','/index.html':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/wizard.js':'text/javascript; charset=utf-8','/reports.js':'text/javascript; charset=utf-8','/market.js':'text/javascript; charset=utf-8','/decision.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/v16-demo.html':'text/html; charset=utf-8','/v16-demo.js':'text/javascript; charset=utf-8','/v16-core.js':'text/javascript; charset=utf-8','/studio.html':'text/html; charset=utf-8','/studio.js':'text/javascript; charset=utf-8','/studio.css':'text/css; charset=utf-8'}
+    filenames={'/intelligence.js':'text/javascript; charset=utf-8','/intelligence.css':'text/css; charset=utf-8','/research.html':'text/html; charset=utf-8','/research.js':'text/javascript; charset=utf-8','/research.css':'text/css; charset=utf-8','/hub.html':'text/html; charset=utf-8','/unified.js':'text/javascript; charset=utf-8','/unified.css':'text/css; charset=utf-8','/legacy.html':'text/html; charset=utf-8','/index.html':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/wizard.js':'text/javascript; charset=utf-8','/reports.js':'text/javascript; charset=utf-8','/market.js':'text/javascript; charset=utf-8','/decision.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/v16-demo.html':'text/html; charset=utf-8','/v16-demo.js':'text/javascript; charset=utf-8','/v16-core.js':'text/javascript; charset=utf-8','/studio.html':'text/html; charset=utf-8','/studio.js':'text/javascript; charset=utf-8','/studio.css':'text/css; charset=utf-8'}
     if path not in filenames: return self.answer({'error':'Not found'},404)
     content=(STATIC/path[1:]).read_bytes()
     self.send_response(200);self.send_header('Content-Type',filenames[path]);self.send_header('Content-Length',str(len(content)));self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.end_headers();self.wfile.write(content)

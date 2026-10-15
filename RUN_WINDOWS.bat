@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 echo.
 echo ===================================================
-echo   PO INTELLIGENCE HUB v1.9 - EVIDENCE-BASED ANSWERS
+echo   PO INTELLIGENCE HUB v1.9.1 - EVIDENCE-BASED ANSWERS
 echo ===================================================
 echo.
 if exist "runtime\python.exe" (

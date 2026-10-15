@@ -1,35 +1,66 @@
-# PO Intelligence Hub v1.9
+# PO Intelligence Hub v1.9.1
 
-Giải nén toàn bộ ZIP vào thư mục có quyền ghi, rồi mở **RUN_WINDOWS.bat**. Bản Windows ZIP kèm Python 3.12 và thư viện chuẩn; không cần cài Python riêng. App mở ở http://127.0.0.1:8765. Đóng cửa sổ server để dừng app.
+Giải nén toàn bộ ZIP vào thư mục có quyền ghi, mở **RUN_WINDOWS.bat**. ZIP kèm Python 3.12 và thư viện chuẩn; không cần cài Python riêng. App chạy local tại http://127.0.0.1:8765.
+
+Nếu bản cũ đang chạy, đóng cửa sổ server cũ trước khi mở bản mới. Cập nhật source không thay đổi code đang nằm trong tiến trình cũ.
+
+## Overview
+
+Overview là dashboard từ dữ liệu đã lưu: bốn chỉ số vận hành, biểu đồ, ma trận chủ đề, app có bằng chứng tăng trưởng, vấn đề nguồn, quyết định và research gần đây. Mở dashboard không gọi AI hoặc thu thập mạng.
+
+- Bộ lọc chủ đề/GEO/platform/hoạt động research được lưu và đồng bộ URL. Khoảng 7/30/60/90/180/365 ngày là **thời gian hoạt động research**; kỳ metric được ghi theo từng research, không bị đổi ngầm theo bộ lọc này.
+- Hai kỳ tổng hợp dùng cột so sánh. Series ngày cần ít nhất bốn ngày quan sát; không nối qua ngày thiếu. Không tạo lịch sử ngày từ ngày export.
+- Không cộng các research trùng dữ liệu hoặc trộn nguồn/đơn vị/OS/GEO/kỳ không tương đương. Dữ liệu mâu thuẫn không được đưa vào thứ hạng tăng trưởng.
+- Review và số quảng cáo không tạo market growth. App chỉ đúng chủ đề nằm trong nhóm liên quan, không phải app đã xác nhận tăng trưởng.
+- Bấm **Xem căn cứ** mở panel metric → phép so sánh → URL hoặc CSV/dòng nguồn. URL panel hoạt động sau reload.
+- Research đang chạy được hiển thị riêng; nếu xem phiên hoàn tất trước thì ghi rõ. Kỳ kết thúc hơn bảy ngày trước được đánh dấu cũ. Report cũ không tự được nâng cấp thành metric đã xác minh.
 
 ## Nghiên cứu
 
-1. Chọn **Nghiên cứu mới**, nhập câu hỏi; có thể đính kèm CSV.
-2. Chọn **Codex Auto** hoặc **ChatGPT Manual**. Lựa chọn được ghi nhớ trên trình duyệt.
-3. Bấm **Nghiên cứu**. Câu trả lời, tiến độ, nguồn và lỗi cập nhật cùng trang.
+Nhập câu hỏi, tùy chọn đính kèm CSV, chọn Codex Auto hoặc ChatGPT Manual rồi bấm **Nghiên cứu**. Scope và kết quả nằm cùng một trang. Mặc định US, 30 ngày gần nhất so với 30 ngày trước.
 
-**Auto:** Cài Codex CLI, đăng nhập bằng ChatGPT, kiểm tra và bật cho phép trong Settings. Một lần bấm chạy cả lập scope/discovery strategy, thu thập, đánh giá và phân tích. App không chuyển sang Manual khi Auto lỗi. JSON sai hợp đồng được yêu cầu AI sửa một lần; nếu vẫn lỗi, evidence được giữ lại và có Thử lại bước lỗi.
+**Auto:** Settings → kiểm tra CLI đã đăng nhập ChatGPT → cho phép Codex. Lượt chạy gồm planner, store/news collection, live web research, đối chiếu đoạn trích và analysis. Lượt web chỉ nhận câu hỏi/scope và app public; không nhận CSV riêng. Không chuyển Manual khi lỗi. Lỗi một nguồn giữ nguyên nguồn thành công.
 
-**Manual:** App tự chuẩn bị evidence. Bấm Copy dữ liệu sang ChatGPT, dán vào ChatGPT rồi dán JSON trả về vào app. Không có bước copy planner riêng.
+**Manual:** chỉ một handoff sang ChatGPT. Packet có schema analysis và `new_sources`, yêu cầu ChatGPT tìm/đọc thêm nguồn nếu có browsing. Dán JSON trở lại app; app kiểm tra cấu trúc, URL, đoạn trích, số, kỳ và nguồn trước khi dùng làm metric. Nếu ChatGPT không có browsing, nêu rõ trong gaps; không bịa nguồn.
 
-Phạm vi trong câu hỏi được ưu tiên. Mặc định US, 30 ngày gần nhất so với 30 ngày trước. Phạm vi thực tế luôn hiển thị trên kết quả. Scope Manual dựa trên bộ nhận diện câu hỏi tại local; Auto có thêm AI hiểu chủ đề và đề xuất truy vấn. Với câu hỏi mơ hồ, hãy ghi rõ chủ đề trong câu hỏi và kiểm tra scope hiển thị.
+Mỗi lượt lưu trong SQLite, có Hủy, Thử lại, Chạy lại giữ lịch sử, tên ngắn, xuất JSON và tạo Action/Opportunity. Các lượt Codex lưu log riêng theo planner/web/analysis trong data/workspace_jobs.
 
-## Dữ liệu và giới hạn
+## CSV và ý nghĩa dữ liệu
 
-- CSV dùng parser hiện có cho export Top Apps PoP/YoY: cần ID, category, platform, GEO và kỳ có thể xác định từ dữ liệu/tên file. Không có dữ liệu Sensor Tower đóng gói sẵn.
-- Dataset gắn với research tự được kiểm tra; dữ liệu sai GEO/OS/kỳ/chủ đề bị loại và có lý do. Tên chứa chủ đề nhưng thiếu mô tả được ghi là **có thể liên quan**, cần xác minh.
-- Filter, sort và Top N ở Data Library chỉ thay đổi bảng. **Phân tích tập đang chọn** mới tạo phiên có tập evidence giới hạn rõ ràng.
-- Apple Search trả tối đa 25 kết quả/truy vấn; Google Play collector hiện có trả tối đa 15. Đây là độ phủ search, không phải toàn bộ thị trường. Mọi ứng viên thu về đều được đánh giá; không còn cắt ngầm 70 ứng viên.
-- AI packet có ngân sách 180.000 ký tự cho evidence, ưu tiên thứ tự evidence đã lưu. Số dùng/chưa dùng được công bố; không tự suy rộng phần chưa đưa vào AI.
-- Google Play là connector tùy chọn; nếu chưa cài, app báo thiếu coverage. Bản ZIP kèm thư viện chuẩn Python, chưa kèm connector này. RSS hiện có được giữ lại làm context.
-- Một snapshot listing không đủ kết luận trending. Chỉ tính thay đổi với kỳ CSV/snapshot so sánh phù hợp. Downloads ước tính/reviews không chứng minh UA có lợi nhuận.
+Giữ parser Top Apps PoP/YoY hiện có. Các cột cơ bản: Unified ID, Unified Name, Downloads (Absolute), Downloads (PoP Growth) hoặc Downloads (YoY Growth). GEO/kỳ lấy từ tên export hoặc các cột kỳ được khai báo.
 
-## Nâng cấp dữ liệu cũ
+Các cột tùy chọn mới:
 
-Source hiện hữu đã được cập nhật mà không ghi vào database đang dùng. Khi chạy server mới lần đầu, app sao lưu SQLite vào **data/backups/research-pre-v19-*.sqlite3**, rồi thêm bảng mới; giữ ID và dữ liệu v1.5–v1.8.
+| Mục đích | Cột |
+|---|---|
+| Đối chiếu đúng store identity | Store ID, hoặc App Store ID, hoặc Package ID |
+| Kỳ theo dòng | Period Start, Period End |
+| Dữ liệu ngày | Date và Granularity=daily; hoặc Period Start=Period End |
+| Revenue | Revenue (Absolute), Currency |
+| UA | UA Spend, CPI, Retention (%), ROAS (%), ROAS Target (%) |
+| Cohort UA | Cohort Window (ví dụ D7), Cohort Start, Cohort End, Measurement Date |
 
-ZIP là bản sạch, không có database riêng của bạn. Nếu dùng ZIP để thay app cũ, dừng app cũ trước, sao lưu cả thư mục cũ, rồi giữ/copy thư mục **data** của bản cũ vào bản đã giải nén trước khi chạy. Không copy database khi server còn chạy.
+**Unified ID là namespace riêng**, không tự coi là Store ID dù giá trị số trùng nhau. Không ghép app chỉ bằng tên. CSV chỉ có tên chứa ASMR và category Games có thể cần xác minh chủ đề; Store ID rõ ràng cho phép đối chiếu với public identity phù hợp. Utilities/All Apps có thể xác minh ở cấp category đã yêu cầu.
 
-Research cũ mở trong giao diện mới với dữ liệu nguyên trạng. Chưa có kết quả v1.9 sẽ được ghi rõ; không tự tạo insight thay thế. API cũ và các tài nguyên cũ vẫn có để tương thích. Link report/analysis cũ mở bản chụp lịch sử. Action từ v1.9 trỏ đúng phiên/finding/evidence.
+PoP downloads dùng kỳ liền trước cùng độ dài theo định nghĩa export, không dựng daily timeline. Revenue cần hai kỳ rõ ràng và Currency khớp. Nền bằng 0 không tạo phần trăm vô hạn.
 
-Kết quả từng phiên và evidence được lưu trong SQLite. Có Hủy, Thử lại bước lỗi, Chạy lại (giữ lịch sử), đổi tên ngắn và xuất JSON. Sau khi server bị dừng giữa lượt, mở lại và bấm Thử lại để tiếp tục; Manual đang chờ nhập kết quả vẫn được giữ.
+UA chỉ chấm **so với mục tiêu ROAS do người dùng khai báo** khi có đủ metric, đơn vị tiền, GEO/OS, cohort và Measurement Date chứng minh cohort đã đủ tuổi. Nếu thiếu chỉ trình bày dữ liệu; không gọi có lợi nhuận. Ví dụ ROAS (%)=120 nghĩa là 120%, không phải 1,2.
+
+CSV Worldwide hoặc Unified không được ép thành US/iOS/Android. Nếu scope không phù hợp, app báo lý do và không dùng để khẳng định tăng trưởng trong scope đó. Filter/sort/Top N chỉ đổi bảng; Phân tích tập đang chọn mới tạo scope evidence giới hạn rõ ràng.
+
+## Giới hạn public
+
+- Search là mẫu có giới hạn, không phải toàn bộ thị trường. Store collectors hiện có: Apple tối đa 25/truy vấn, Android tối đa 15/truy vấn.
+- Google Play connector tùy chọn; ZIP không kèm thư viện bên thứ ba. INSTALL_ANDROID_CONNECTOR.bat cài vào runtime của ZIP khi bạn chọn cài.
+- Web research tối đa 12 nguồn/lượt. Verifier đọc HTTPS public, chặn local/private và redirect không hợp lệ; không đăng nhập hoặc vượt paywall. PDF/ảnh/JS không đọc được sẽ ghi chưa xác minh.
+- “Verified” ở nguồn web nghĩa là **đoạn trích đã đối chiếu trên trang**, không phải số liệu đã được kiểm toán độc lập. Số liệu web được ghi là do nguồn công bố. Không xác minh được ngày xuất bản thì để trống; vẫn giữ thời điểm truy cập.
+- Chỉ tạo metric web khi có đủ số, kỳ, GEO, OS, đơn vị và app tương ứng trong nguồn. Rank, search interest và advertising giữ vai trò riêng.
+- Evidence AI có ngân sách 180.000 ký tự. Công bố số dùng/chưa dùng; toàn bộ manifest vẫn lưu. Chưa có xử lý nhiều batch tự động khi vượt ngân sách.
+
+## Nâng cấp và bảo toàn dữ liệu
+
+Trước migration v1.9.1, app sao lưu SQLite vào **data/backups/research-pre-v191-*.sqlite3** rồi thêm bảng phiên bản và evidence web. ID, bảng và dữ liệu cũ giữ nguyên. Report cũ mở được, nhưng không tự được coi là đã qua điều kiện metric mới.
+
+ZIP không chứa database hoặc CSV riêng. Muốn dùng dữ liệu cũ: dừng server, sao lưu thư mục app cũ, giữ/copy thư mục **data** vào bản đã giải nén rồi chạy. Không copy SQLite khi server còn chạy.
+
+Xem IMPLEMENTATION_REPORT_V191.md và release-checks-v191.json được bàn giao bên cạnh ZIP để phân biệt fixture, live, migration và smoke test.

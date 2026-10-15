@@ -7,7 +7,7 @@ import re
 import hashlib
 from collections import Counter, defaultdict
 
-FIELDS = ('downloads','delta_pop','growth_pop','delta_yoy','growth_yoy','revenue','dau')
+FIELDS = ('downloads','delta_pop','growth_pop','delta_yoy','growth_yoy','revenue','dau','ua_spend','ua_cpi','retention_percent','roas_percent','roas_target_percent')
 
 def init(c):
     c.executescript('''
@@ -98,8 +98,9 @@ def import_batch(c,p):
         if not isinstance(r,dict):continue
         rid=str(r.get('id','')).strip()[:140];line=int((r.get('source') or {}).get('line',0))
         if not rid or line<2:continue
-        clean={k:r.get(k) for k in ('id','name','publisher','category','publisher_country','platform','geo','period_start','period_end','release')}
+        clean={k:r.get(k) for k in ('id','name','publisher','category','publisher_country','platform','geo','period_start','period_end','release','store_id','currency','cohort_window','cohort_start','cohort_end','measurement_date')}
         for k in FIELDS:clean[k]=_num(r.get(k))
+        clean['currency']=str(r.get('currency') or 'Unknown')[:10]
         clean['source']={'filename':meta['filename'],'line':line,'kind':meta['kind'],'import_id':fid}
         c.execute('INSERT OR IGNORE INTO studio_rows(import_id,line,unified_id,payload) VALUES(?,?,?,?)',(fid,line,rid,_json(clean)))
         saved+=1
@@ -136,6 +137,7 @@ def records(c,pid):
 def merge_records(raw):
     merged={}; warnings=[]
     for r in raw:
+        r={**{field:None for field in FIELDS},**r}
         key=(r['id'],r['platform'],r['geo'],r['period_start'],r['period_end'])
         if key not in merged:
             x=dict(r);x['sources']={};x['field_sources']={}

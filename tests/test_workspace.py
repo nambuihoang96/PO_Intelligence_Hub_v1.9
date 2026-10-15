@@ -102,7 +102,7 @@ class WorkspaceTests(unittest.TestCase):
             if 'seeds' in schema['properties']:return dict(seeds=['ASMR'],reason='Exact topic')
             with s.con() as c:r=w.get(c,rid)
             result=self.answer(r);attempts.append(prompt)
-            if len(attempts)==1:result['next_steps'][0]['evidence_ids']=[]
+            if len(attempts)==1:result['scale_candidates'][0]['evidence_ids']=[]
             return result
         with patch.object(w,'check_cli',return_value={'ok':True}),patch.object(w,'call_ai',side_effect=mock):
             r=self.wait(self.start(mode='auto')['id'])

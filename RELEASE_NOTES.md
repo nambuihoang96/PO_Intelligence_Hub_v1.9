@@ -1,12 +1,3 @@
-# v1.9 — Hỏi một câu, nhận câu trả lời có bằng chứng
+# v1.9.1 — Market dashboard & evidence eligibility
 
-- Research Workspace mới thay workflow nhiều panel; sáu mục điều hướng dùng chung ngữ cảnh.
-- Lượt chạy, tiến độ, evidence preview và kết quả từng phiên lưu trong SQLite.
-- Auto chạy AI planner và analysis; Manual có một evidence handoff.
-- Scope không gắn cứng Game/Puzzle; CSV/public đánh giá relevance và kỳ rõ ràng.
-- Signals so sánh truy đến CSV filename/line hoặc public snapshot ID.
-- Hợp đồng JSON được kiểm tra kiểu, ID và định danh app; Auto sửa một lần nếu sai.
-- Tên ngắn có thể sửa; lịch sử kết quả, xuất JSON, Action/Opportunity và quyết định cùng workspace.
-- Backup trước migration; API cũ, ID và dữ liệu v1.5–v1.8 giữ nguyên.
-
-Xem README_V19.md và IMPLEMENTATION_REPORT.md để biết kiểm thử và giới hạn nguồn.
+Overview mới có chart/ma trận/growth/decisions từ SQLite, không gọi AI khi mở. Research tách growth và UA; review/search/ad counts không tạo market growth. Auto có live web research và verifier; Manual một handoff có new_sources. CSV hỗ trợ Currency, Store ID, kỳ/ngày và cohort UA tùy chọn. Backup trước migration, giữ report/ID/data cũ. Xem README_V191.md và IMPLEMENTATION_REPORT_V191.md cho cách chạy, kết quả kiểm thử và giới hạn.

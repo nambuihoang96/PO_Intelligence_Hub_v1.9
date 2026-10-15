@@ -10,7 +10,8 @@ def discover(p):
     topic='ASMR' if 'asmr' in p['term'].lower() else 'Utility'
     return {'results':[dict(store_id='fixture-'+topic,name=topic+' Test App',platform='iOS',country=p['country'],primary_genre='Games' if topic=='ASMR' else 'Utilities',description=topic+' game or utility tools',reviews=123,store_url='https://apps.apple.com/us/app/id123'),dict(store_id='unrelated',name='Sudoku',platform='iOS',country=p['country'],primary_genre='Games',description='Number puzzles',reviews=500)]}
 s.discover=discover;s.android_search=lambda *a:(_ for _ in ()).throw(ValueError('TEST FIXTURE: connector unavailable'));s.research_news_context=lambda *a:([],[])
-def ai(srv,rid,prompt,schema):
+def ai(srv,rid,prompt,schema,web=False):
+    if web:return dict(sources=[],coverage=[dict(source='web research TEST',status='no_results',note='TEST no extra sources')])
     if 'seeds' in schema['properties']:return dict(seeds=['ASMR game'],reason='Exact question topic')
     with s.LOCK,s.con() as c:r=w.get(c,rid)
     e=next(e for e in r['packet']['evidence'] if e['relevance']=='relevant');eid=e['evidence_id']
