@@ -20,20 +20,39 @@ def number(x):
     if isinstance(x,bool):return None
     try:
         v=float(x);return v if math.isfinite(v) else None
+    except (TypeError,ValueError,OverflowError):return None
+
+def _geo_key(value):return str(value or '').casefold()
+
+def _iso_date(value):
+    if not isinstance(value,str):return None
+    try:
+        parsed=dt.date.fromisoformat(value)
+        return parsed if parsed.isoformat()==value else None
     except (TypeError,ValueError):return None
 
-def key(scope):return (scope.get('geo'),tuple(sorted(scope.get('platforms',[]))),scope.get('start'),scope.get('end'))
+def key(scope):return (scope.get('start'),scope.get('end'),scope.get('comparison_start'),scope.get('comparison_end'))
 
 def metric_id(parts):return 'METRIC:'+hashlib.sha256(json.dumps(parts,sort_keys=True,default=str).encode()).hexdigest()[:18]
 
 def compare(metric,app,name,platform,geo,scope,before,after,ids,provider,definition=None,eligible=True,reason='',unit=None):
     before,after=number(before),number(after)
     if before is None or after is None or before<0 or after<0:return None
-    delta=after-before;direction='up' if delta>0 else 'down' if delta<0 else 'flat'
-    return dict(id=metric_id([metric,app,platform,geo,key(scope),provider,definition]),metric=metric,app_id=str(app),name=name,
+    try:delta=after-before
+    except OverflowError:return None
+    if not math.isfinite(delta):return None
+    direction='up' if delta>0 else 'down' if delta<0 else 'flat'
+    definition=definition or metric;unit=unit or UNITS[metric]
+    percent=None
+    if before:
+        try:percent=delta/before*100
+        except (OverflowError,ZeroDivisionError):percent=None
+        if percent is None or not math.isfinite(percent):return None
+    identity=[metric,str(app),platform,_geo_key(geo),scope.get('start'),scope.get('end'),scope.get('comparison_start'),scope.get('comparison_end'),provider,definition,unit]
+    return dict(id=metric_id(identity),metric=metric,app_id=str(app),name=name,
       platform=platform,geo=geo,period_start=scope['start'],period_end=scope['end'],comparison_start=scope['comparison_start'],comparison_end=scope['comparison_end'],
-      before=before,after=after,delta=delta,percent=delta/before*100 if before else None,zero_base=before==0,direction=direction,
-      unit=unit or UNITS[metric],definition=definition or metric,provider=provider,evidence_ids=list(dict.fromkeys(ids)),
+      before=before,after=after,delta=delta,percent=percent,zero_base=before==0,direction=direction,
+      unit=unit,definition=definition,provider=provider,evidence_ids=list(dict.fromkeys(ids)),
       eligible=bool(eligible),exclusion_reason=reason,classification='observed_estimate' if metric in ('downloads','revenue') and provider=='CSV user export' else 'reported_by_source',
       supports='app_growth' if metric in ('downloads','revenue') else 'visibility' if metric=='rank' else 'search_interest',ua_status='not_assessed')
 
@@ -42,111 +61,174 @@ def enrich(packet,scope):
     evidence=packet.get('evidence',[]);comparisons=[];warnings=list(packet.get('warnings',[]))
     packet.setdefault('coverage',{}).update(total=len(evidence),assessed=len(evidence),not_assessed=0,
       **{kind:sum(e.get('relevance')==kind for e in evidence) for kind in ('relevant','possible','unrelated')})
-    public={(str(e.get('store_id')),e.get('platform'),e.get('country')):e for e in evidence if e.get('kind')=='public' and e.get('relevance')=='relevant'}
-    csv=[e for e in evidence if e.get('kind')=='csv' and e.get('relevance')!='unrelated']
+    geo_equal=lambda left,right:_geo_key(left)==_geo_key(right)
+    public={(str(e.get('store_id')),e.get('platform'),str(e.get('country') or '').casefold()):e for e in evidence if e.get('kind')=='public' and e.get('relevance')=='relevant'}
+    csv=[e for e in evidence if e.get('kind')=='csv']
+    related_csv=[e for e in csv if e.get('relevance')!='unrelated']
+    def refs(row):
+        result=[]
+        if isinstance(row.get('evidence_id'),str) and row['evidence_id']:result.append(row['evidence_id'])
+        declared=row.get('evidence_ids')
+        if isinstance(declared,(list,tuple)):
+            result.extend(value for value in declared if isinstance(value,str) and value)
+        return list(dict.fromkeys(result))
+    def lineage_state(row,field,ids):
+        sources=row.get('field_sources')
+        if sources in (None,{}):return True
+        if not isinstance(sources,dict):return False
+        if field not in sources:return True
+        src=sources[field]
+        if not isinstance(src,dict):return False
+        import_id,line=src.get('import_id'),src.get('line')
+        if isinstance(import_id,bool) or isinstance(line,bool):return False
+        if not str(import_id or '').isdigit() or not str(line or '').isdigit():return False
+        try:import_id,line=int(import_id),int(line)
+        except (ValueError,OverflowError):return False
+        if import_id<=0 or line<=0:return False
+        return 'CSV:'+str(import_id)+':'+str(line) in ids
+    def row_state(row):
+        verified=row.get('relevance')=='relevant' or bool(row.get('store_id')) and (str(row['store_id']),row.get('platform'),str(row.get('geo') or '').casefold()) in public
+        prefix='Downloads không khớp:'
+        conflict=any(isinstance(warning,str) and warning.strip().startswith(prefix) and warning.strip()[len(prefix):].strip()==str(row.get('id')) for warning in warnings)
+        in_scope=geo_equal(row.get('geo'),scope.get('geo')) and row.get('platform') in scope.get('platforms',[])
+        reason='' if verified else 'Chủ đề chưa được xác minh; tên app không đủ chứng minh.'
+        if not in_scope:verified=False;reason='GEO hoặc OS không khớp phạm vi nghiên cứu.'
+        if conflict:verified=False;reason='Nguồn CSV mâu thuẫn; cần đối chiếu trước khi kết luận.'
+        return verified,reason,conflict
     for row in csv:
         # Cross-source identity uses an exact store ID + OS + GEO only, never a name join.
-        verified=row.get('relevance')=='relevant' or bool(row.get('store_id')) and (str(row['store_id']),row.get('platform'),row.get('geo')) in public
-        ids=row.get('evidence_ids') or [row['evidence_id']]
-        reason='' if verified else 'Chủ đề chưa được xác minh; tên app không đủ chứng minh.'
-        conflict=any(str(row.get('id')) in warning and 'khớp' in warning for warning in warnings)
-        if conflict:verified=False;reason='Nguồn CSV mâu thuẫn; cần đối chiếu trước khi kết luận.'
+        verified,reason,conflict=row_state(row);ids=refs(row)
+        if row.get('relevance')=='unrelated':continue
         if row.get('period_start')!=scope['start'] or row.get('period_end')!=scope['end']:continue
         delta=number(row.get('delta_pop'));current=number(row.get('downloads'))
         if delta is not None and current is not None:
-            prior=current-delta
-            src=(row.get('field_sources') or {}).get('delta_pop')
-            metric_ids=list(ids)
-            if src:metric_ids.append('CSV:'+str(src['import_id'])+':'+str(src['line']))
-            m=compare('downloads',row['id'],row['name'],row['platform'],row['geo'],scope,prior,current,metric_ids,'CSV user export',eligible=verified,reason=reason)
+            try:prior=current-delta
+            except OverflowError:prior=None
+            old=[x for x in related_csv if (str(x.get('id')),x.get('platform'),geo_equal(x.get('geo'),row.get('geo')),x.get('period_start'),x.get('period_end'))==(str(row.get('id')),row.get('platform'),True,scope.get('comparison_start'),scope.get('comparison_end'))]
+            baseline=[number(x.get('downloads')) for x in old];baseline_refs=[e for x in old for e in refs(x)]
+            baseline_bad=any(value is None or value<0 or not refs(x) or not row_state(x)[0] or row_state(x)[2] for x,value in zip(old,baseline))
+            baseline_conflict=bool(baseline) and (len(set(baseline))>1 or any(value!=prior for value in baseline))
+            unrelated=[x for x in csv if x.get('relevance')=='unrelated' and (str(x.get('id')),x.get('platform'),geo_equal(x.get('geo'),row.get('geo')),x.get('period_start'),x.get('period_end'))==(str(row.get('id')),row.get('platform'),True,scope.get('comparison_start'),scope.get('comparison_end')) and number(x.get('downloads')) is not None and number(x.get('downloads'))>=0 and number(x.get('downloads'))!=prior]
+            lineage_ok=lineage_state(row,'delta_pop',ids)
+            unsafe_prior=prior is None or prior<0
+            why=reason if not verified else 'Nguồn CSV mâu thuẫn với delta PoP.' if baseline_conflict or unrelated else 'Lineage delta PoP không hợp lệ hoặc không được khai báo.' if not lineage_ok else 'Baseline không đủ điều kiện xác minh.' if baseline_bad else 'Baseline không hợp lệ theo delta PoP.' if unsafe_prior else ''
+            unrelated_refs=[ref for x in unrelated for ref in refs(x)]
+            refs_ok=bool(ids)
+            why=why or ('' if refs_ok else 'Nguồn CSV không khai báo evidence ID hợp lệ.')
+            m=compare('downloads',row['id'],row['name'],row['platform'],row['geo'],scope,prior if prior is not None else -1,current,ids+baseline_refs+unrelated_refs,'CSV user export',eligible=verified and lineage_ok and refs_ok and prior is not None and prior>=0 and not baseline_bad and not baseline_conflict and not unrelated,reason=why)
             if m:m['comparison_basis']='PoP declared by export; preceding equal-length period';comparisons.append(m)
         yoy=number(row.get('delta_yoy'))
         if yoy is not None and current is not None:
             year_scope=dict(scope)
             for field in ('start','end'):
-                date=dt.date.fromisoformat(scope[field])
+                date=_iso_date(scope.get(field))
+                if date is None:year_scope=None;break
                 try:previous=date.replace(year=date.year-1)
                 except ValueError:previous=date.replace(year=date.year-1,day=28)
                 year_scope['comparison_'+field]=str(previous)
-            m=compare('downloads',row['id'],row['name'],row['platform'],row['geo'],year_scope,current-yoy,current,ids,'CSV user export',definition='downloads_yoy',eligible=verified,reason=reason)
+            lineage_ok=lineage_state(row,'delta_yoy',ids)
+            if year_scope is None:continue
+            try:yoy_prior=current-yoy
+            except OverflowError:yoy_prior=None
+            refs_ok=bool(ids)
+            m=compare('downloads',row['id'],row['name'],row['platform'],row['geo'],year_scope,yoy_prior if yoy_prior is not None else -1,current,ids,'CSV user export',definition='downloads_yoy',eligible=verified and lineage_ok and refs_ok and yoy_prior is not None,reason=reason if not verified else '' if lineage_ok and refs_ok else 'Lineage delta YoY hoặc evidence ID không hợp lệ hoặc không được khai báo.')
             if m:m['comparison_basis']='YoY declared by export';comparisons.append(m)
         for metric in ('downloads','revenue'):
             if metric=='downloads' and delta is not None:continue
-            old=[x for x in csv if (x.get('id'),x.get('platform'),x.get('geo'),x.get('period_start'),x.get('period_end'))==(row['id'],row['platform'],row['geo'],scope['comparison_start'],scope['comparison_end'])]
+            old=[x for x in related_csv if (str(x.get('id')),x.get('platform'),geo_equal(x.get('geo'),row.get('geo')),x.get('period_start'),x.get('period_end'))==(str(row.get('id')),row.get('platform'),True,scope['comparison_start'],scope['comparison_end'])]
             if not old:continue
-            previous=old[0]
-            if any(number(x.get(metric))!=number(previous.get(metric)) for x in old):continue
-            currency=row.get('currency','Unknown')
-            currency_ok=metric!='revenue' or currency!='Unknown' and currency==previous.get('currency')
-            m=compare(metric,row['id'],row['name'],row['platform'],row['geo'],scope,previous.get(metric),row.get(metric),ids+(previous.get('evidence_ids') or [previous['evidence_id']]),'CSV user export',eligible=verified and currency_ok,reason=reason if currency_ok else 'Thiếu hoặc không khớp đơn vị tiền tệ trong CSV.',unit=currency if metric=='revenue' else None)
+            values=[number(x.get(metric)) for x in old];prior=values[0]
+            currency=row.get('currency');currency_ok=metric!='revenue' or currency not in (None,'','Unknown') and all(currency==x.get('currency') for x in old)
+            prior_conflict=any(value!=prior for value in values[1:]);baseline_bad=any(value is None or value<0 or not refs(x) or not row_state(x)[0] or row_state(x)[2] for x,value in zip(old,values))
+            why=reason if not verified else 'Các baseline có giá trị mâu thuẫn.' if prior_conflict else 'Baseline không đủ điều kiện xác minh.' if baseline_bad else 'Thiếu hoặc không khớp đơn vị tiền tệ trong CSV.' if not currency_ok else ''
+            refs_ok=bool(ids)
+            m=compare(metric,row['id'],row['name'],row['platform'],row['geo'],scope,prior,row.get(metric),ids+[e for x in old for e in refs(x)],'CSV user export',eligible=verified and refs_ok and currency_ok and not baseline_bad and not prior_conflict,reason=why or ('' if refs_ok else 'Nguồn CSV không khai báo evidence ID hợp lệ.'),unit=(currency if currency is not None else 'Unknown') if metric=='revenue' else None)
             if m:m['comparison_basis']='Matched app ID, OS, GEO and explicit equal-length periods';comparisons.append(m)
     for ev in evidence:
         if ev.get('kind')!='web' or ev.get('verification')!='verified':continue
         for obs in ev.get('observations',[]):
             if not obs.get('verified') or obs.get('metric') not in DIMENSIONS:continue
-            matching=[e for e in evidence if e.get('kind')=='public' and e.get('relevance')=='relevant' and str(e.get('store_id'))==str(obs.get('app_id')) and e.get('platform')==obs.get('platform') and e.get('country')==obs.get('geo')]
-            if obs.get('geo')!=scope['geo'] or obs.get('platform') not in scope['platforms']:continue
+            matching=[e for e in evidence if e.get('kind')=='public' and e.get('relevance')=='relevant' and str(e.get('store_id'))==str(obs.get('app_id')) and e.get('platform')==obs.get('platform') and geo_equal(e.get('country'),obs.get('geo'))]
+            if not geo_equal(obs.get('geo'),scope['geo']) or obs.get('platform') not in scope['platforms']:continue
             if any(obs.get(k)!=scope[k] for k in ('period_start','period_end','comparison_start','comparison_end')):continue
             if not matching:continue
             if not any(e.get('name','').casefold() in ev.get('quote','').casefold() for e in matching):continue
             m=compare(obs['metric'],obs['app_id'],matching[0]['name'],obs['platform'],obs['geo'],scope,obs.get('before'),obs.get('after'),[ev['evidence_id'],matching[0]['evidence_id']],ev.get('origin_url') or ev['url'],obs.get('definition'),unit=obs.get('unit'))
             if m:comparisons.append(m)
-    unique={}
+    unique={};conflicts=set()
     for m in comparisons:
-        if m['id'] in unique and (m['before'],m['after'])!=(unique[m['id']]['before'],unique[m['id']]['after']):
-            m['eligible']=False;m['exclusion_reason']='Hai nguồn cùng định nghĩa và kỳ có giá trị mâu thuẫn.'
-        unique[m['id']]=m
+        previous=unique.get(m['id'])
+        if previous and (m['before'],m['after'])!=(previous['before'],previous['after']):conflicts.add(m['id'])
+        if previous:
+            previous['evidence_ids']=list(dict.fromkeys(previous['evidence_ids']+m['evidence_ids']))
+            if not m['eligible']:
+                previous['eligible']=False;previous['exclusion_reason']=m.get('exclusion_reason') or previous['exclusion_reason']
+        else:unique[m['id']]=dict(m)
+    for identity in conflicts:
+        unique[identity]['eligible']=False;unique[identity]['exclusion_reason']='Hai nguồn cùng định nghĩa và kỳ có giá trị mâu thuẫn.'
     packet['comparisons']=list(unique.values())
-    daily=defaultdict(dict);daily_conflicts=set()
+    daily=defaultdict(dict);daily_conflicts=set();daily_sources={}
     for row in csv:
-        if row.get('period_start')!=row.get('period_end') or not scope['start']<=row.get('period_start','')<=scope['end']:continue
-        if row.get('relevance')!='relevant' and (not row.get('store_id') or (str(row['store_id']),row.get('platform'),row.get('geo')) not in public):continue
-        yoy=number(row.get('delta_yoy'))
-        if yoy is not None and current is not None:
-            year_scope=dict(scope)
-            for field in ('start','end'):
-                date=dt.date.fromisoformat(scope[field])
-                try:previous=date.replace(year=date.year-1)
-                except ValueError:previous=date.replace(year=date.year-1,day=28)
-                year_scope['comparison_'+field]=str(previous)
-            m=compare('downloads',row['id'],row['name'],row['platform'],row['geo'],year_scope,current-yoy,current,ids,'CSV user export',definition='downloads_yoy',eligible=verified,reason=reason)
-            if m:m['comparison_basis']='YoY declared by export';comparisons.append(m)
+        start_date=_iso_date(row.get('period_start'));end_date=_iso_date(row.get('period_end'));scope_start=_iso_date(scope.get('start'));scope_end=_iso_date(scope.get('end'))
+        if start_date is None or end_date is None or scope_start is None or scope_end is None or start_date!=end_date or not scope_start<=start_date<=scope_end:continue
+        if row.get('relevance')=='unrelated' or not refs(row):continue
+        eligible,_,row_conflict=row_state(row)
+        if not eligible or row_conflict:continue
         for metric in ('downloads','revenue'):
             value=number(row.get(metric))
-            if value is None or value<0 or metric=='revenue' and row.get('currency','Unknown')=='Unknown':continue
-            group=(row['id'],row['name'],row['platform'],row['geo'],metric,row.get('currency') if metric=='revenue' else UNITS[metric])
-            point=dict(date=row['period_start'],value=value,evidence_ids=row.get('evidence_ids') or [row['evidence_id']])
-            if point['date'] in daily[group] and daily[group][point['date']]['value']!=value:daily_conflicts.add(group)
-            daily[group][point['date']]=point
+            currency=row.get('currency')
+            if value is None or value<0 or metric=='revenue' and currency in (None,'','Unknown'):continue
+            group=(str(row['id']),row['platform'],_geo_key(row['geo']),metric,currency if metric=='revenue' else UNITS[metric])
+            point=dict(date=row['period_start'],value=value,evidence_ids=refs(row))
+            if point['date'] in daily[group]:
+                if daily[group][point['date']]['value']!=value:daily_conflicts.add(group)
+                daily[group][point['date']]['evidence_ids']=list(dict.fromkeys(daily[group][point['date']]['evidence_ids']+point['evidence_ids']))
+            else:daily[group][point['date']]=point
+            daily_sources.setdefault(group,row)
     packet['time_series']=[]
     for group,points in daily.items():
         if len(points)<4 or group in daily_conflicts:continue
-        packet['time_series'].append(dict(id=metric_id(group),app_id=group[0],app_name=group[1],platform=group[2],geo=group[3],metric=group[4],unit=group[5],provider='CSV user export',definition='Daily observed export; missing days not interpolated',granularity='day',chart_type='line',points=sorted(points.values(),key=lambda p:p['date']),evidence_ids=list(dict.fromkeys(e for p in points.values() for e in p['evidence_ids']))))
+        source=daily_sources[group]
+        packet['time_series'].append(dict(id=metric_id(group),app_id=group[0],app_name=source['name'],platform=group[1],geo=source['geo'],metric=group[3],unit=group[4],provider='CSV user export',definition='Daily observed export; missing days not interpolated',granularity='day',chart_type='line',points=sorted(points.values(),key=lambda p:p['date']),evidence_ids=list(dict.fromkeys(e for p in points.values() for e in p['evidence_ids']))))
     packet['schema_version']=VERSION
     packet['coverage']['comparable_metrics']=sum(m['eligible'] for m in unique.values())
     packet['gaps']=list(dict.fromkeys(packet.get('gaps',[])+(['Chưa có downloads/revenue cùng kỳ và chủ đề được xác minh.'] if not any(m['eligible'] and m['metric'] in ('downloads','revenue') for m in unique.values()) else [])))
     return packet
 
 def assessment(packet,scope):
-    comparisons=packet.get('comparisons',[]);axes=[]
+    comparisons=packet.get('comparisons',[]);axes=[];by_id={};conflicts=set()
+    for metric in comparisons:
+        identity=(metric.get('metric'),str(metric.get('app_id')),metric.get('platform'),_geo_key(metric.get('geo')),metric.get('period_start'),metric.get('period_end'),metric.get('comparison_start'),metric.get('comparison_end'),metric.get('provider'),metric.get('definition'),metric.get('unit'))
+        previous=by_id.get(identity)
+        if previous and (previous.get('before'),previous.get('after'))!=(metric.get('before'),metric.get('after')):conflicts.add(identity)
+        elif previous:
+            previous['evidence_ids']=list(dict.fromkeys(previous.get('evidence_ids',[])+metric.get('evidence_ids',[])))
+            if not metric.get('eligible'):previous['eligible']=False
+        else:by_id[identity]=dict(metric)
+    comparisons=[metric for identity,metric in by_id.items() if identity not in conflicts]
     for dimension in DIMENSIONS:
         metrics=[m for m in comparisons if m['metric']==dimension and m['eligible']]
         groups=defaultdict(list)
-        for m in metrics:groups[(m['provider'],m['platform'],m['geo'],m['unit'],m['definition'])].append(m)
+        for m in metrics:groups[(m['provider'],m['platform'],_geo_key(m['geo']),m['unit'],m['definition'],m.get('period_start'),m.get('period_end'),m.get('comparison_start'),m.get('comparison_end'))].append(m)
         summaries=[]
         for group,items in groups.items():
             if dimension in ('downloads','revenue'):
-                before=sum(m['before'] for m in items);after=sum(m['after'] for m in items)
-                change=(after-before)/before*100 if before else None
+                try:
+                    before=sum(m['before'] for m in items);after=sum(m['after'] for m in items)
+                    change=(after-before)/before*100 if before else None
+                    if not math.isfinite(before) or not math.isfinite(after) or change is not None and not math.isfinite(change):raise OverflowError
+                except (OverflowError,ValueError):
+                    continue
                 text=f'{len(items)} app trong tập có kỳ so sánh; chỉ kết luận trong tập này.'
             else:before=after=change=None;text=f'{len(items)} phép so sánh riêng; không cộng các thang rank/search.'
-            summaries.append(dict(provider=group[0],platform=group[1],geo=group[2],unit=group[3],definition=group[4],before=before,after=after,percent=change,app_count=len(items),metric_ids=[m['id'] for m in items],evidence_ids=list(dict.fromkeys(e for m in items for e in m['evidence_ids'])),limitation=text))
-        axes.append(dict(dimension=dimension,status='comparable' if metrics else 'insufficient_evidence',groups=summaries,metric_ids=[m['id'] for m in metrics]))
+            summaries.append(dict(provider=group[0],platform=group[1],geo=items[0]['geo'],unit=group[3],definition=group[4],period_start=group[5],period_end=group[6],comparison_start=group[7],comparison_end=group[8],before=before,after=after,percent=change,app_count=len(items),metric_ids=[m['id'] for m in items],evidence_ids=list(dict.fromkeys(e for m in items for e in m['evidence_ids'])),limitation=text))
+        safe_metric_ids={identity for group in summaries for identity in group['metric_ids']}
+        axes.append(dict(dimension=dimension,status='comparable' if summaries else 'insufficient_evidence',groups=summaries,metric_ids=[m['id'] for m in metrics if m['id'] in safe_metric_ids]))
     growth=[m for m in comparisons if m['eligible'] and m['metric'] in ('downloads','revenue') and m['delta']>0]
     related=[e for e in packet.get('evidence',[]) if e.get('kind') in ('csv','public') and e.get('relevance')!='unrelated' and not any(str(m['app_id'])==str(e.get('store_id') if e['kind']=='public' else e.get('id')) and m['platform']==e.get('platform') for m in growth)]
     related_by_app={}
     for e in related:
-        identity=(e['kind'],str(e.get('store_id') if e['kind']=='public' else e.get('id')),e.get('platform'),e.get('geo') or e.get('country'))
+        identity=(e['kind'],str(e.get('store_id') if e['kind']=='public' else e.get('id')),e.get('platform'),_geo_key(e.get('geo') or e.get('country')))
         if identity not in related_by_app:related_by_app[identity]=dict(e)
         else:
             previous=related_by_app[identity]
@@ -171,7 +253,7 @@ def assessment(packet,scope):
         ua.append(item)
     ua_status='target_assessed' if any(x['status'] in ('meets_target','below_target') for x in ua) else 'metrics_only' if ua else 'not_assessed'
     for m in growth:
-        match=next((u for u in ua if (u['app_id'],u['platform'],u['geo'])==(m['app_id'],m['platform'],m['geo'])),None)
+        match=next((u for u in ua if (u['app_id'],u['platform'],_geo_key(u['geo']))==(m['app_id'],m['platform'],_geo_key(m['geo']))),None)
         if match:m.update(ua_status=match['status'],ua_details=match)
     return dict(schema_version=VERSION,market_assessment=axes,app_growth=growth,
       ua_assessment=dict(status=ua_status,answer='Chưa đánh giá hiệu quả UA: cần spend, CPI, retention, ROAS theo cohort và mục tiêu do PO cung cấp.' if not ua else 'Có số liệu UA theo app; chỉ chấm mục tiêu khi cohort đã đủ tuổi và mục tiêu được khai báo.',metrics=ua,target='user_provided_only' if ua_status=='target_assessed' else None),
@@ -246,7 +328,7 @@ def dashboard(c,args):
         if is_legacy:attention.append(dict(context,kind='legacy',text='Report cũ: chưa xác thực theo hợp đồng metric v1.9.1.',evidence_ids=[]))
     dedup={};conflicts=[]
     for m in all_metrics:
-        identity=(m['metric'],m['app_id'],m['platform'],m['geo'],m['period_start'],m['period_end'],m['comparison_start'],m['comparison_end'],m['provider'],m['definition'],m['unit'])
+        identity=(m['metric'],m['app_id'],m['platform'],_geo_key(m['geo']),m['period_start'],m['period_end'],m['comparison_start'],m['comparison_end'],m['provider'],m['definition'],m['unit'])
         if identity in dedup and (dedup[identity]['before'],dedup[identity]['after'])!=(m['before'],m['after']):
             conflicts.append(identity);attention.append(dict(research_id=m['research_id'],run_id=m['run_id'],name=m['name'],kind='conflict',text='Cùng app/nguồn/kỳ có số liệu khác nhau giữa research; không xếp hạng.',evidence_ids=m['evidence_ids']))
         else:dedup.setdefault(identity,m)

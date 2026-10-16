@@ -1,3 +1,4 @@
+import copy
 import unittest
 import tempfile
 import json
@@ -243,6 +244,41 @@ class WorkspaceTests(unittest.TestCase):
         for signal in packet['signals']:
             if signal['metric']=='estimated_downloads_delta_pop':
                 self.assertEqual(signal['evidence_ids'],[f"CSV:{import_ids['pop']}:2"])
+
+    def test_verified_imports_preserve_pop_yoy_lineage_and_formulas(self):
+        start,end='2026-09-14','2026-10-13';import_ids={}
+        with s.con() as c:
+            for kind,field,value,fingerprint in [('pop','delta_pop',45000,'a'*64),('yoy','delta_yoy',95000,'b'*64)]:
+                imp=s.studio.start_import(c,dict(project_id=self.pid,filename=kind.upper()+'.csv',fingerprint=fingerprint,kind=kind,period=dict(start=start,end=end,geo='Worldwide')))
+                import_ids[kind]=imp['id']
+                row=dict(id='csv-verified',store_id='42',name='ASMR Test',description='ASMR sensory game for relaxation',category='Games',platform='Unified',geo='Worldwide',period_start=start,period_end=end,downloads=145000,source=dict(line=8))
+                row[field]=value;s.studio.import_batch(c,dict(import_id=imp['id'],rows=[row]));s.studio.finish_import(c,dict(import_id=imp['id'],expected=1))
+            s.studio.save_public(c,self.pid,[dict(store_id='42',name='ASMR Test',description='ASMR sensory game for relaxation',platform='Unified',country='Worldwide',primary_genre='Games')])
+            raw=s.studio.records(c,self.pid)
+        raw_before=copy.deepcopy(raw)
+        with patch.object(w,'start_thread'):
+            launch=self.start(question='ASMR games')
+        scope=launch['scope']
+        with s.con() as c:packet=w.assess(c,self.pid,scope)
+        evidence_before=copy.deepcopy(packet['evidence'])
+        import market_intelligence as mi
+        mi.enrich(packet,scope)
+        self.assertEqual(packet['evidence'],evidence_before)
+        self.assertEqual({(r['downloads'],r.get('delta_pop'),r.get('delta_yoy')) for r in raw},{(145000,45000,None),(145000,None,95000)})
+        rows=[e for e in packet['evidence'] if e['kind']=='csv']
+        self.assertEqual({e['relevance'] for e in rows},{'possible'})
+        self.assertEqual(len(packet['comparisons']),2)
+        pop,yoy=packet['comparisons']
+        self.assertEqual((pop['before'],pop['after'],pop['delta'],pop['percent']),(100000,145000,45000,45))
+        self.assertEqual((yoy['before'],yoy['after'],yoy['delta'],yoy['percent']),(50000,145000,95000,190))
+        expected={f"CSV:{import_ids['pop']}:8",f"CSV:{import_ids['yoy']}:8"}
+        self.assertTrue(all(m['eligible'] for m in (pop,yoy)))
+        self.assertEqual(pop['evidence_ids'] and set(pop['evidence_ids']),expected)
+        self.assertEqual(set(yoy['evidence_ids']),expected)
+        self.assertNotEqual(pop['id'],yoy['id'])
+        self.assertEqual({r['downloads'] for r in raw},{145000})
+        with s.con() as c:raw_after=s.studio.records(c,self.pid)
+        self.assertEqual(raw_after,raw_before)
 
     def test_launch_reuses_saved_worldwide_unified_scope(self):
         for casing in ('Worldwide','WORLDWIDE','worldwide'):

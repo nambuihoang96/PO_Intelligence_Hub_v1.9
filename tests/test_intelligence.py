@@ -59,6 +59,267 @@ class EligibilityTests(unittest.TestCase):
         self.row['roas_target_percent']=110;a=mi.assessment(self.assess(),self.scope);self.assertEqual(a['ua_assessment']['metrics'][0]['status'],'meets_target')
         self.row['measurement_date']=self.scope['end'];a=mi.assessment(self.assess(),self.scope);self.assertEqual(a['ua_assessment']['status'],'metrics_only')
 
+    def fixed_scope(self):
+        return dict(geo='US',platforms=['iOS'],start='2026-09-14',end='2026-10-13',
+                    comparison_start='2026-08-15',comparison_end='2026-09-13')
+
+    def test_pop_yoy_formulas_identity_and_zero_baseline(self):
+        scope=self.fixed_scope()
+        pop=mi.compare('downloads','42','ASMR Test','iOS','US',scope,100000,145000,['CSV:P'],'CSV user export')
+        yoy_scope=dict(scope,comparison_start='2025-09-14',comparison_end='2025-10-13')
+        yoy=mi.compare('downloads','42','ASMR Test','iOS','US',yoy_scope,50000,145000,['CSV:Y'],'CSV user export',definition='downloads_yoy')
+        self.assertEqual((pop['before'],pop['after'],pop['delta'],pop['percent']), (100000,145000,45000,45))
+        self.assertEqual((pop['comparison_start'],pop['comparison_end']), ('2026-08-15','2026-09-13'))
+        self.assertEqual((yoy['before'],yoy['delta'],yoy['percent']), (50000,95000,190))
+        self.assertEqual((yoy['comparison_start'],yoy['comparison_end']), ('2025-09-14','2025-10-13'))
+        self.assertNotEqual(pop['id'],yoy['id'])
+        self.assertEqual((pop['unit'],pop['classification']), ('estimated downloads','observed_estimate'))
+        down=mi.compare('downloads','42','ASMR Test','iOS','US',scope,100000,80000,['CSV:D'],'CSV user export')
+        self.assertEqual((down['delta'],down['percent'],down['direction']), (-20000,-20,'down'))
+        zero=mi.compare('downloads','42','ASMR Test','iOS','US',scope,0,1000,['CSV:Z'],'CSV user export')
+        self.assertIsNone(zero['percent']);self.assertTrue(zero['zero_base'])
+
+    def test_metric_identity_uses_comparison_period_and_unit(self):
+        scope=self.fixed_scope()
+        base=mi.compare('revenue','42','ASMR Test','iOS','US',scope,10,20,['E2','E1'],'CSV user export',unit='USD')
+        other_period=dict(scope,comparison_start='2025-09-14',comparison_end='2025-10-13')
+        other=mi.compare('revenue','42','ASMR Test','iOS','US',other_period,10,20,['E1','E2'],'CSV user export',unit='USD')
+        other_unit=mi.compare('revenue','42','ASMR Test','iOS','US',scope,10,20,['E1','E2'],'CSV user export',unit='EUR')
+        reordered=mi.compare('revenue','42','ASMR Test','iOS','US',scope,10,20,['E1','E2'],'CSV user export',unit='USD')
+        self.assertNotEqual(base['id'],other['id']);self.assertNotEqual(base['id'],other_unit['id'])
+        self.assertEqual(base['id'],reordered['id'])
+
+    def test_invalid_numeric_levels_are_rejected(self):
+        scope=self.fixed_scope()
+        for value in (-1,True,float('nan'),float('inf')):
+            with self.subTest(value=value):
+                self.assertIsNone(mi.compare('downloads','42','ASMR','iOS','US',scope,100,value,['E'],'CSV user export'))
+
+    def test_comparison_dedup_conflict_is_sticky_and_unions_real_refs(self):
+        scope=self.fixed_scope()
+        def row(value,eid):
+            return dict(kind='csv',id='42',name='ASMR Test',platform='iOS',geo='US',relevance='relevant',
+                        period_start=scope['start'],period_end=scope['end'],downloads=value,delta_pop=45000,
+                        evidence_id=eid,evidence_ids=[eid],sources={},field_sources={})
+        a,b,c=row(145000,'CSV:A'),row(146000,'CSV:B'),row(146000,'CSV:C')
+        for rows in ([a,b,c],[a,b,a,a],[c,b,a,a],[a,c,b]):
+            with self.subTest(order=[r['evidence_id'] for r in rows]):
+                packet=mi.enrich(dict(evidence=[dict(r) for r in rows],warnings=[],signals=[],coverage={},gaps=[]),scope)
+                metric=next(m for m in packet['comparisons'] if m['metric']=='downloads')
+                self.assertFalse(metric['eligible'])
+                self.assertEqual(set(metric['evidence_ids']),{r['evidence_id'] for r in rows})
+
+    def test_daily_series_validates_dates_and_does_not_reuse_yoy_state(self):
+        scope=self.fixed_scope()
+        days=['2026-09-14','2026-09-16','2026-09-20','2026-10-13']
+        rows=[dict(kind='csv',id='42',name='ASMR Test',platform='iOS',geo='US',relevance='relevant',
+                   period_start=day,period_end=day,downloads=i+1,delta_yoy=777,evidence_id=f'CSV:{i}',
+                   evidence_ids=[f'CSV:{i}'],sources={},field_sources={}) for i,day in enumerate(days)]
+        packet=mi.enrich(dict(evidence=rows,warnings=[],signals=[],coverage={},gaps=[]),scope)
+        self.assertFalse(packet['comparisons'])
+        self.assertEqual([p['date'] for p in packet['time_series'][0]['points']],days)
+        self.assertEqual(len(mi.enrich(dict(evidence=rows[:3],warnings=[],signals=[],coverage={},gaps=[]),scope)['time_series']),0)
+        malformed=dict(rows[-1],period_start='2026-09-31',period_end='2026-09-31')
+        malformed_packet=mi.enrich(dict(evidence=[*rows[:3],malformed],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        self.assertFalse(malformed_packet['time_series'])
+
+    def test_daily_revenue_requires_known_single_currency(self):
+        scope=self.fixed_scope();rows=[]
+        for i in range(4):
+            rows.append(dict(kind='csv',id='42',name='ASMR',platform='iOS',geo='US',relevance='relevant',
+                period_start=f'2026-09-{14+i:02d}',period_end=f'2026-09-{14+i:02d}',revenue=10,currency=('USD','EUR',None,'')[i],
+                evidence_id=f'CSV:{i}',evidence_ids=[f'CSV:{i}']))
+        packet=mi.enrich(dict(evidence=rows,warnings=[],signals=[],coverage={},gaps=[]),scope)
+        self.assertFalse(any(s['metric']=='revenue' for s in packet['time_series']))
+
+    def test_assessment_keeps_distinct_comparison_periods(self):
+        scope=self.fixed_scope()
+        first=mi.compare('downloads','42','ASMR','iOS','US',scope,100,150,['E1'],'CSV user export')
+        second=mi.compare('downloads','43','Other','iOS','US',dict(scope,comparison_start='2025-09-14',comparison_end='2025-10-13'),100,150,['E2'],'CSV user export')
+        report=mi.assessment(dict(comparisons=[first,second]),scope)
+        groups=next(axis for axis in report['market_assessment'] if axis['dimension']=='downloads')['groups']
+        self.assertEqual(len(groups),2)
+
+    def test_explicit_baseline_requires_relevance_consistency_and_currency(self):
+        scope=self.fixed_scope()
+        current=dict(self.row,period_start=scope['start'],period_end=scope['end'],revenue=1000,currency='USD')
+        old=dict(self.row,id='42',period_start=scope['comparison_start'],period_end=scope['comparison_end'],downloads=100000,revenue=500,currency='USD',evidence_id='CSV:old',evidence_ids=['CSV:old'])
+        old['relevance']='possible'
+        packet=mi.enrich(dict(evidence=[current,old],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        revenue=next(m for m in packet['comparisons'] if m['metric']=='revenue')
+        self.assertFalse(revenue['eligible'])
+        old['relevance']='relevant';old['currency']=None
+        packet=mi.enrich(dict(evidence=[current,old],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        revenue=next(m for m in packet['comparisons'] if m['metric']=='revenue')
+        self.assertFalse(revenue['eligible'])
+        downloads=next(m for m in packet['comparisons'] if m['metric']=='downloads')
+        self.assertTrue(downloads['eligible'])
+
+    def test_conflicting_duplicate_baseline_and_pop_delta_do_not_double_count(self):
+        scope=self.fixed_scope()
+        current=dict(self.row,period_start=scope['start'],period_end=scope['end'],downloads=145000,delta_pop=45000)
+        old=dict(self.row,id='42',period_start=scope['comparison_start'],period_end=scope['comparison_end'],downloads=100000,evidence_id='CSV:old1',evidence_ids=['CSV:old1'])
+        old2=dict(old,downloads=99999,evidence_id='CSV:old2',evidence_ids=['CSV:old2'])
+        packet=mi.enrich(dict(evidence=[current,old,old2],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        downloads=[m for m in packet['comparisons'] if m['metric']=='downloads']
+        self.assertEqual(len(downloads),1)
+        self.assertFalse(downloads[0]['eligible'])
+
+    def test_duplicate_daily_date_unions_refs_or_rejects_conflict_across_names(self):
+        scope=self.fixed_scope()
+        dates=['2026-09-14','2026-09-16','2026-09-20','2026-10-13']
+        rows=[dict(kind='csv',id='42',name='ASMR',platform='iOS',geo='US',relevance='relevant',period_start=d,period_end=d,downloads=i+10,evidence_id=f'E{i}',evidence_ids=[f'E{i}']) for i,d in enumerate(dates)]
+        duplicate=dict(rows[1],name='Renamed listing',evidence_id='E-extra',evidence_ids=['E-extra'])
+        packet=mi.enrich(dict(evidence=rows+[duplicate],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        series=next(s for s in packet['time_series'] if s['metric']=='downloads')
+        point=next(p for p in series['points'] if p['date']==dates[1])
+        self.assertEqual(set(point['evidence_ids']),{'E1','E-extra'})
+        conflicting=dict(duplicate,downloads=999)
+        packet=mi.enrich(dict(evidence=rows+[conflicting],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        self.assertFalse(packet['time_series'])
+
+    def test_comparison_never_invents_lineage_and_preserves_import_evidence(self):
+        scope=self.fixed_scope()
+        row=dict(kind='csv',id='42',name='ASMR',platform='iOS',geo='US',relevance='relevant',period_start=scope['start'],period_end=scope['end'],downloads=145000,delta_pop=45000,evidence_id='E-real',evidence_ids=['E-real'],field_sources={'delta_pop':dict(import_id=77,line=4)},sources={})
+        evidence_before=copy.deepcopy([row])
+        packet=mi.enrich(dict(evidence=[row],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        self.assertEqual(packet['comparisons'][0]['evidence_ids'],['E-real'])
+        self.assertEqual(packet['evidence'],evidence_before)
+
+    def test_lineage_metadata_requires_declared_reference_and_valid_shape(self):
+        scope=self.fixed_scope()
+        row=dict(kind='csv',id='42',name='ASMR',platform='iOS',geo='US',relevance='relevant',
+                 period_start=scope['start'],period_end=scope['end'],downloads=145000,delta_pop=45000,
+                 evidence_id='CSV:77:4',evidence_ids=['CSV:77:4','CSV:88:9'],
+                 field_sources={'delta_pop':dict(import_id='77',line='4')},sources={'pop':{'import_id':77,'line':4}})
+        before=copy.deepcopy(row)
+        packet=mi.enrich(dict(evidence=[row],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        metric=packet['comparisons'][0]
+        self.assertTrue(metric['eligible'])
+        self.assertEqual(set(metric['evidence_ids']),{'CSV:77:4','CSV:88:9'})
+        self.assertEqual(row,before)
+        for metadata in (None,[],{'import_id':True,'line':4},{'import_id':77,'line':0},'bad'):
+            with self.subTest(metadata=metadata):
+                malformed=dict(row,evidence_ids=['CSV:88:9'],evidence_id='CSV:88:9',field_sources={'delta_pop':metadata})
+                malformed_before=copy.deepcopy(malformed)
+                result=mi.enrich(dict(evidence=[malformed],warnings=[],signals=[],coverage={},gaps=[]),scope)
+                comparison=result['comparisons'][0]
+                self.assertEqual(comparison['evidence_ids'],['CSV:88:9'])
+                self.assertFalse(comparison['eligible'])
+                self.assertTrue(comparison['exclusion_reason'])
+                self.assertEqual(malformed,malformed_before)
+
+    def test_warning_matches_complete_app_id(self):
+        scope=self.fixed_scope()
+        row=dict(self.row,id='42',store_id='42',period_start=scope['start'],period_end=scope['end'],downloads=145000,delta_pop=45000)
+        for warning,eligible in (('Downloads không khớp: 142',True),('Downloads không khớp: 42',False),('Downloads không khớp:  42 ',False)):
+            with self.subTest(warning=warning):
+                packet=mi.enrich(dict(evidence=[dict(row)],warnings=[warning],signals=[],coverage={},gaps=[]),scope)
+                self.assertEqual(packet['comparisons'][0]['eligible'],eligible)
+
+    def test_pop_declared_delta_survives_conflicting_and_unrelated_baselines(self):
+        scope=self.fixed_scope()
+        def current_row():
+            return dict(kind='csv',id='42',name='ASMR',platform='iOS',geo='US',relevance='relevant',
+                        period_start=scope['start'],period_end=scope['end'],downloads=145000,delta_pop=45000,
+                        evidence_id='CURRENT',evidence_ids=['CURRENT'],sources={},field_sources={})
+        baseline=dict(kind='csv',id='42',name='ASMR',platform='iOS',geo='US',relevance='relevant',
+                      period_start=scope['comparison_start'],period_end=scope['comparison_end'],downloads=99000,
+                      evidence_id='BASE',evidence_ids=['BASE'])
+        unrelated=dict(baseline,relevance='unrelated',downloads=98000,evidence_id='UNRELATED',evidence_ids=['UNRELATED'])
+        for rows in ([baseline,current_row()],[current_row(),baseline],[unrelated,current_row()]):
+            with self.subTest(rows=[row['evidence_id'] for row in rows]):
+                packet=mi.enrich(dict(evidence=rows,warnings=[],signals=[],coverage={},gaps=[]),scope)
+                metric=next(m for m in packet['comparisons'] if m['definition']=='downloads')
+                self.assertEqual((metric['before'],metric['after'],metric['delta'],metric['percent']),(100000,145000,45000,45))
+                self.assertFalse(metric['eligible'])
+        packet=mi.enrich(dict(evidence=[current_row(),unrelated],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        metric=packet['comparisons'][0]
+        self.assertEqual(set(metric['evidence_ids']),{'CURRENT','UNRELATED'})
+        self.assertFalse(metric['eligible'])
+        unrelated_equal=dict(unrelated,downloads=100000,evidence_id='SAME-UNRELATED',evidence_ids=['SAME-UNRELATED'])
+        packet=mi.enrich(dict(evidence=[current_row(),unrelated_equal],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        metric=packet['comparisons'][0]
+        self.assertTrue(metric['eligible'])
+        self.assertEqual(metric['evidence_ids'],['CURRENT'])
+
+    def test_daily_rejects_all_invalid_dates_and_unrelated_even_with_public_match(self):
+        scope=self.fixed_scope()
+        invalid=(None,'','bad','2026-09-31','20260914','2026-W38-1',42)
+        rows=[]
+        for i,value in enumerate(invalid):
+            rows.append(dict(kind='csv',id='42',name='ASMR',store_id='42',platform='iOS',geo='US',relevance='relevant',
+                             period_start=value,period_end=value,downloads=i+1,evidence_id=f'E{i}',evidence_ids=[f'E{i}']))
+        packet=mi.enrich(dict(evidence=rows,warnings=[],signals=[],coverage={},gaps=[]),scope)
+        self.assertFalse(packet['time_series'])
+        days=['2026-09-14','2026-09-16','2026-09-20','2026-10-13']
+        valid=[dict(rows[0],period_start=day,period_end=day,evidence_id=f'V{i}',evidence_ids=[f'V{i}']) for i,day in enumerate(days)]
+        excluded=dict(valid[0],relevance='unrelated',downloads=99,evidence_id='X',evidence_ids=['X'])
+        public=dict(kind='public',store_id='42',name='ASMR',platform='iOS',country='US',relevance='relevant',evidence_id='P')
+        packet=mi.enrich(dict(evidence=valid+[excluded,public],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        series=next(s for s in packet['time_series'] if s['metric']=='downloads')
+        self.assertEqual(len(series['points']),4)
+        self.assertNotIn('X',series['evidence_ids'])
+        packet=mi.enrich(dict(evidence=valid,warnings=['Downloads không khớp: 142'],signals=[],coverage={},gaps=[]),scope)
+        self.assertEqual(len(packet['time_series']),1)
+        packet=mi.enrich(dict(evidence=valid,warnings=['Downloads không khớp: 42'],signals=[],coverage={},gaps=[]),scope)
+        self.assertFalse(packet['time_series'])
+
+    def test_finite_arithmetic_and_leap_day_yoy(self):
+        scope=self.fixed_scope()
+        for before,after in ((10**10000,10),(1,10**10000),(0,10**10000)):
+            with self.subTest(large_before=before>10**100,large_after=after>10**100):
+                self.assertIsNone(mi.compare('downloads','42','ASMR','iOS','US',scope,before,after,['E'],'CSV user export'))
+        self.assertIsNone(mi.compare('downloads','42','ASMR','iOS','US',scope,1e-308,1e308,['E'],'CSV user export'))
+        self.assertIsNone(mi.compare('downloads','42','ASMR','iOS','US',scope,0,None,['E'],'CSV user export'))
+        huge_metrics=[mi.compare('downloads',str(app),'ASMR','iOS','US',scope,1e308,1e308,[f'E{app}'],'CSV user export') for app in (42,43)]
+        aggregate=mi.assessment(dict(comparisons=huge_metrics),scope)
+        axis=next(a for a in aggregate['market_assessment'] if a['dimension']=='downloads')
+        self.assertFalse(axis['groups'])
+        json.dumps(aggregate,allow_nan=False)
+        leap=dict(scope,start='2024-02-01',end='2024-02-29')
+        row=dict(self.row,period_start=leap['start'],period_end=leap['end'],downloads=145000,delta_pop=None,delta_yoy=95000)
+        packet=mi.enrich(dict(evidence=[row],warnings=[],signals=[],coverage={},gaps=[]),leap)
+        yoy=packet['comparisons'][0]
+        self.assertEqual((yoy['comparison_start'],yoy['comparison_end']),('2023-02-01','2023-02-28'))
+
+    def test_assessment_casing_deduplicates_without_rewriting_source_geo(self):
+        scope=self.fixed_scope()
+        first=mi.compare('downloads','42','ASMR','Unified','Worldwide',scope,100,150,['E1'],'CSV user export')
+        second=mi.compare('downloads','42','ASMR','Unified','WORLDWIDE',scope,100,150,['E2'],'CSV user export')
+        self.assertEqual(first['id'],second['id'])
+        second=dict(second,id='LEGACY:other')
+        report=mi.assessment(dict(comparisons=[first,second]),scope)
+        axis=next(a for a in report['market_assessment'] if a['dimension']=='downloads')
+        self.assertEqual(len(axis['groups']),1)
+        self.assertEqual(axis['groups'][0]['app_count'],1)
+        self.assertEqual(set(axis['groups'][0]['evidence_ids']),{'E1','E2'})
+        self.assertEqual(axis['groups'][0]['geo'],'Worldwide')
+        conflict=mi.compare('downloads','42','ASMR','Unified','worldwide',scope,100,160,['E3'],'CSV user export')
+        report=mi.assessment(dict(comparisons=[first,conflict]),scope)
+        axis=next(a for a in report['market_assessment'] if a['dimension']=='downloads')
+        self.assertEqual(axis['groups'],[])
+
+    def test_enrichment_casing_deduplicates_and_keeps_source_geo(self):
+        scope=self.fixed_scope();scope['geo']='Worldwide';scope['platforms']=['Unified']
+        rows=[]
+        for geo,eid in (('Worldwide','E1'),('WORLDWIDE','E2'),('worldwide','E3')):
+            rows.append(dict(kind='csv',id='42',name='ASMR',platform='Unified',geo=geo,relevance='relevant',
+                             period_start=scope['start'],period_end=scope['end'],downloads=150,delta_pop=50,
+                             evidence_id=eid,evidence_ids=[eid],sources={},field_sources={}))
+        packet=mi.enrich(dict(evidence=rows,warnings=[],signals=[],coverage={},gaps=[]),scope)
+        metrics=packet['comparisons']
+        self.assertEqual(len(metrics),1)
+        self.assertTrue(metrics[0]['eligible'])
+        self.assertEqual(set(metrics[0]['evidence_ids']),{'E1','E2','E3'})
+        self.assertEqual(metrics[0]['geo'],'Worldwide')
+        self.assertEqual({row['geo'] for row in packet['evidence']},{'Worldwide','WORLDWIDE','worldwide'})
+        conflicting=dict(rows[-1],downloads=160,evidence_id='E4',evidence_ids=['E4'])
+        packet=mi.enrich(dict(evidence=rows+[conflicting],warnings=[],signals=[],coverage={},gaps=[]),scope)
+        self.assertEqual(len(packet['comparisons']),1)
+        self.assertFalse(packet['comparisons'][0]['eligible'])
+        self.assertEqual(set(packet['comparisons'][0]['evidence_ids']),{'E1','E2','E3','E4'})
+
 class SourcesTests(unittest.TestCase):
     def fake_server(self):
         import threading,contextlib,types
@@ -107,9 +368,9 @@ class DashboardTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.original=(s.DATA,s.DBPATH);s.DATA=Path(self.tmp.name);s.DBPATH=s.DATA/'test.sqlite3';s.init()
         self.scope=w.scope_for('ASMR games')
     def tearDown(self):s.DATA,s.DBPATH=self.original;self.tmp.cleanup()
-    def save(self,before=100,after=150,status='ready',legacy=False,pid=None):
+    def save(self,before=100,after=150,status='ready',legacy=False,pid=None,geo='US'):
         if not pid:pid=s.new_project(dict(name='ASMR growth',brief='ASMR games'))['id']
-        row=dict(kind='csv',id='42',name='ASMR Game',platform='iOS',geo='US',category='Games',relevance='relevant',period_start=self.scope['start'],period_end=self.scope['end'],downloads=after,delta_pop=after-before,evidence_id='CSV:1:2',evidence_ids=['CSV:1:2'],sources={},field_sources={})
+        row=dict(kind='csv',id='42',name='ASMR Game',platform='iOS',geo=geo,category='Games',relevance='relevant',period_start=self.scope['start'],period_end=self.scope['end'],downloads=after,delta_pop=after-before,evidence_id='CSV:1:2',evidence_ids=['CSV:1:2'],sources={},field_sources={})
         packet=mi.enrich(dict(evidence=[row],signals=[],warnings=[],coverage={},gaps=[],sources=[]),self.scope)
         if legacy:packet.pop('schema_version')
         with s.con() as c:
@@ -123,6 +384,10 @@ class DashboardTests(unittest.TestCase):
         self.save();d=self.dashboard();self.assertEqual(d['series'][0]['chart_type'],'bar');self.assertEqual(len(d['series'][0]['points']),2);self.assertEqual(d['growth_apps'][0]['name'],'ASMR Game')
     def test_duplicate_research_not_double_counted(self):
         self.save();self.save();d=self.dashboard();self.assertEqual(d['summary']['comparable_findings'],1);self.assertEqual(len(d['growth_apps']),1)
+    def test_dashboard_casing_deduplicates_worldwide_research(self):
+        self.scope['geo']='Worldwide'
+        for geo in ('Worldwide','WORLDWIDE','worldwide'):self.save(geo=geo)
+        d=self.dashboard();self.assertEqual(d['summary']['comparable_findings'],1);self.assertEqual(len(d['growth_apps']),1)
     def test_conflicting_research_not_ranked(self):
         self.save();self.save(after=160);d=self.dashboard();self.assertFalse(d['growth_apps']);self.assertTrue(any(a['kind']=='conflict' for a in d['attention']))
     def test_filters_do_not_mutate_results(self):

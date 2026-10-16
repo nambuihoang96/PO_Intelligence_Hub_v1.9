@@ -48,6 +48,30 @@ class AnswerTests(unittest.TestCase):
   self.assertEqual(accepted['claims'][0]['metric_ids'],metric_ids)
   self.assertTrue(all(m['unit']=='estimated downloads' for m in verified_packet['comparisons']))
   self.assertEqual(verified_packet['schema_version'],mi.VERSION)
+ def test_growth_validation_requires_real_metric_and_evidence_ids(self):
+  import market_intelligence as mi
+  scope=dict(geo='US',platforms=['iOS'],start='2026-09-14',end='2026-10-13',comparison_start='2026-08-15',comparison_end='2026-09-13')
+  row=dict(evidence_id='E1',evidence_ids=['E1'],kind='csv',relevance='relevant',id='1',store_id='1',name='App A',platform='iOS',geo='US',period_start=scope['start'],period_end=scope['end'],downloads=150,delta_pop=50)
+  enriched=mi.enrich(dict(evidence=[row],warnings=[],signals=[],coverage={},gaps=[]),scope)
+  metric=enriched['comparisons'][0]
+  self.assertTrue(metric['eligible'])
+  packet=dict(evidence=enriched['evidence'],comparisons=enriched['comparisons'])
+  answer=self.answer();answer['request_types']=['growth'];answer['claims'][0].update(kind='growth',evidence_ids=['E1'],metric_ids=[metric['id']])
+  self.assertEqual(w.validate(answer,packet)['claims'][0]['metric_ids'],[metric['id']])
+  answer['claims'][0]['metric_ids']=['METRIC:invented']
+  with self.assertRaises(ValueError):w.validate(answer,packet)
+  answer['claims'][0]['metric_ids']=[metric['id']];answer['claims'][0]['evidence_ids']=['CSV:999:99']
+  with self.assertRaises(ValueError):w.validate(answer,packet)
+ def test_growth_validation_rejects_diagnostic_conflict_metric(self):
+  import market_intelligence as mi
+  scope=dict(geo='US',platforms=['iOS'],start='2026-09-14',end='2026-10-13',comparison_start='2026-08-15',comparison_end='2026-09-13')
+  row=dict(evidence_id='E1',evidence_ids=['E1'],kind='csv',relevance='relevant',id='1',store_id='1',name='App A',platform='iOS',geo='US',period_start=scope['start'],period_end=scope['end'],downloads=150,delta_pop=50,field_sources={'delta_pop':{'import_id':77,'line':4}})
+  enriched=mi.enrich(dict(evidence=[row],warnings=[],signals=[],coverage={},gaps=[]),scope)
+  metric=enriched['comparisons'][0]
+  self.assertFalse(metric['eligible'])
+  packet=dict(evidence=enriched['evidence'],comparisons=enriched['comparisons'])
+  answer=self.answer();answer['request_types']=['growth'];answer['claims'][0].update(kind='growth',evidence_ids=['E1'],metric_ids=[metric['id']])
+  with self.assertRaises(ValueError):w.validate(answer,packet)
  def test_discovery_preview_does_not_force_trend(self):
   a=w.preliminary(dict(question='Top app drama'),{})
   self.assertNotIn('trend',a);self.assertEqual(a['schema_version'],'1.9.2')
