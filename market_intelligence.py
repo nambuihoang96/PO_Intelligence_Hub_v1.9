@@ -60,6 +60,16 @@ def enrich(packet,scope):
             if src:metric_ids.append('CSV:'+str(src['import_id'])+':'+str(src['line']))
             m=compare('downloads',row['id'],row['name'],row['platform'],row['geo'],scope,prior,current,metric_ids,'CSV user export',eligible=verified,reason=reason)
             if m:m['comparison_basis']='PoP declared by export; preceding equal-length period';comparisons.append(m)
+        yoy=number(row.get('delta_yoy'))
+        if yoy is not None and current is not None:
+            year_scope=dict(scope)
+            for field in ('start','end'):
+                date=dt.date.fromisoformat(scope[field])
+                try:previous=date.replace(year=date.year-1)
+                except ValueError:previous=date.replace(year=date.year-1,day=28)
+                year_scope['comparison_'+field]=str(previous)
+            m=compare('downloads',row['id'],row['name'],row['platform'],row['geo'],year_scope,current-yoy,current,ids,'CSV user export',definition='downloads_yoy',eligible=verified,reason=reason)
+            if m:m['comparison_basis']='YoY declared by export';comparisons.append(m)
         for metric in ('downloads','revenue'):
             if metric=='downloads' and delta is not None:continue
             old=[x for x in csv if (x.get('id'),x.get('platform'),x.get('geo'),x.get('period_start'),x.get('period_end'))==(row['id'],row['platform'],row['geo'],scope['comparison_start'],scope['comparison_end'])]
@@ -91,6 +101,16 @@ def enrich(packet,scope):
     for row in csv:
         if row.get('period_start')!=row.get('period_end') or not scope['start']<=row.get('period_start','')<=scope['end']:continue
         if row.get('relevance')!='relevant' and (not row.get('store_id') or (str(row['store_id']),row.get('platform'),row.get('geo')) not in public):continue
+        yoy=number(row.get('delta_yoy'))
+        if yoy is not None and current is not None:
+            year_scope=dict(scope)
+            for field in ('start','end'):
+                date=dt.date.fromisoformat(scope[field])
+                try:previous=date.replace(year=date.year-1)
+                except ValueError:previous=date.replace(year=date.year-1,day=28)
+                year_scope['comparison_'+field]=str(previous)
+            m=compare('downloads',row['id'],row['name'],row['platform'],row['geo'],year_scope,current-yoy,current,ids,'CSV user export',definition='downloads_yoy',eligible=verified,reason=reason)
+            if m:m['comparison_basis']='YoY declared by export';comparisons.append(m)
         for metric in ('downloads','revenue'):
             value=number(row.get(metric))
             if value is None or value<0 or metric=='revenue' and row.get('currency','Unknown')=='Unknown':continue
@@ -158,6 +178,7 @@ def assessment(packet,scope):
       related_apps=related,comparison_count=sum(m['eligible'] for m in comparisons),growth_answer=f'{len(growth)} phép so sánh cho thấy app tăng downloads/revenue trong phạm vi dữ liệu.' if growth else 'Chưa có app đủ bằng chứng tăng trưởng trong phạm vi nghiên cứu.')
 
 def decorate(result,packet,scope):
+    if result.get('schema_version')=='1.9.2':return result
     result.update(assessment(packet,scope));return result
 
 def enforce_ai(result,packet):
@@ -205,7 +226,7 @@ def dashboard(c,args):
         if not data['comparison_count']:missing.append(dict(research_id=project['id'],run_id=chosen['id'],name=project['name']))
         context=dict(research_id=project['id'],run_id=chosen['id'],name=project['name'],topic=scope.get('topic') or scope['product_type'],scope=chosen['scope'])
         stale=chosen['scope']['end']<str(dt.date.today()-dt.timedelta(days=7))
-        recent.append(dict(context,status=latest['status'],displayed_result_run_id=chosen['id'],using_previous=chosen['id']!=latest['id'],stale_data=stale,updated_at=chosen['updated_at'],data_at=(chosen.get('result') or {}).get('data_at'),legacy=is_legacy,answer=(chosen.get('result') or {}).get('trend',{}).get('answer','Chưa có câu trả lời hoàn chỉnh.')))
+        recent.append(dict(context,status=latest['status'],displayed_result_run_id=chosen['id'],using_previous=chosen['id']!=latest['id'],stale_data=stale,updated_at=chosen['updated_at'],data_at=(chosen.get('result') or {}).get('data_at'),legacy=is_legacy,answer=(chosen.get('result') or {}).get('direct_answer') or (chosen.get('result') or {}).get('trend',{}).get('answer','Chưa có câu trả lời hoàn chỉnh.')))
         if stale:attention.append(dict(context,kind='gap',text='Kỳ dữ liệu kết thúc hơn 7 ngày trước; đọc kết quả cùng thời điểm nguồn.',evidence_ids=[]))
         for axis in data['market_assessment']:
             groups=[g for g in axis['groups'] if not platform or g['platform']==platform]

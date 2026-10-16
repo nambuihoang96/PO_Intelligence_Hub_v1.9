@@ -2,14 +2,14 @@
 name: PO Intelligence Hub
 description: Dark research workspace with answers and inspectable evidence
 colors:
-  primary: "#416bd1"
+  primary: "#4768ca"
   focus: "#7ea6ff"
-  background: "#0c1119"
-  panel: "#131d2a"
-  raised: "#1b293b"
-  border: "#32435a"
-  foreground: "#edf3fc"
-  muted: "#b3c2d7"
+  background: "#101114"
+  panel: "#17191e"
+  raised: "#20232b"
+  border: "#2c3039"
+  foreground: "#eceef3"
+  muted: "#a6acb9"
   success: "#83d9b6"
   error: "#ffabab"
   warning: "#f0cf90"
@@ -27,7 +27,7 @@ typography:
     lineHeight: 1.4
   body:
     fontFamily: "Segoe UI, Arial, sans-serif"
-    fontSize: "15px"
+    fontSize: "16px"
     fontWeight: 400
     lineHeight: 1.55
 rounded:
@@ -62,7 +62,7 @@ One system sans family carries controls, prose and data. Body prose is limited t
 
 ## Layout
 
-Desktop uses a 260px navigation column and a flexible workspace; navigation reduces to 210px below 950px. Below 650px it stacks above the content, with a horizontally scrollable navigation row. Tables scroll inside their own container. Sections use 28px vertical padding; related controls use 12px gaps.
+Desktop uses a 232px navigation column and a flexible workspace. Below 768px navigation opens in a native modal drawer rather than stacking above the answer. Tables scroll inside their own container. Sections use 28px vertical padding; related controls use 12px gaps.
 
 ## Elevation & Depth
 
@@ -86,3 +86,15 @@ Buttons have visible hover, active, disabled and keyboard focus states. Focus us
 ## v1.9.1 dashboard extension
 
 The Overview uses a twelve-column grid: a primary chart spans eight columns and attention spans four; comparison tables span the full row. Below 1150px these stack. Below 650px operational KPIs form two columns. Bar comparisons require explicit periods; daily lines require at least four actual dates and do not bridge missing days. The source drawer preserves its run/evidence URL through reload. Blue controls indicate actions, not confidence. Coverage, legacy and stale (>7-day-old period end) labels accompany research context.
+
+## v1.9.3 — product UI
+
+The shell follows compact Linear-style navigation; the answer follows an editorial document. `product.css` is the final token/component layer, after compatibility styles. No external fonts, libraries, analytics or user avatars are required.
+
+- Reading hierarchy: page 28px, section 20px, answer 17px, prose 16px; tables 14px; metadata 11–13px. Mobile adapts headings and table scrolling.
+- Use the app comparison table before supporting detail. Each claim ID renders once; repeated references reuse citation numbers. Store listing details may collapse for non-comparison questions; comparison facts stay visible.
+- Source citations resolve the original evidence IDs. The source drawer retains URLs, periods, excerpts and raw inspection. Do not fabricate charts or turn a shortlist into a ranking.
+- Secondary research actions belong in a keyboard-accessible overflow menu. Cancel stays visible while running. Follow-up remains in the same research.
+- Same-run updates preserve drafts, cursor, focus, expanded source detail/menu and scroll. Mobile uses native dialog focus trapping and Escape close.
+- Components: workspace chrome, sidebar, primary/secondary actions, action menu, composer, source citation, app table, answer section, source-detail disclosure, next-step row, follow-up composer, evidence drawer.
+- Breakpoints: drawer below 768px; content outline hidden below 1280px; dashboard stacks as space requires. Tables scroll within their own region; body never scrolls horizontally.
