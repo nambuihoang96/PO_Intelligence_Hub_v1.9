@@ -185,7 +185,8 @@ def relevance(row,scope,csv=False):
     desc=str(row.get('description') or '').lower(); name=str(row.get('name') or '').lower()
     reasons=[]; status='relevant'
     geo=row.get('geo') if csv else row.get('country')
-    if str(geo or '').upper()!=scope['geo']:reasons.append('GEO không khớp hoặc chưa biết')
+    row_geo=str(geo or '').upper();scope_geo=str(scope.get('geo') or '').upper()
+    if row_geo in ('','UNKNOWN') or row_geo!=scope_geo:reasons.append('GEO không khớp hoặc chưa biết')
     if row.get('platform') not in scope['platforms']:reasons.append('Platform không khớp hoặc Unified chưa tách OS')
     if scope['product_type']=='games' and 'game' not in cat:reasons.append('Chưa xác minh là game')
     if scope['product_type']=='utilities' and not any(x in cat for x in ('utilit','productivity','tools')):reasons.append('Chưa xác minh là tiện ích')

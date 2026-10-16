@@ -127,6 +127,146 @@ class WorkspaceTests(unittest.TestCase):
         sc=w.scope_for('ASMR games')
         for row in [dict(name='Puzzle',category='Games',platform='iOS',geo='US',period_start=sc['start'],period_end=sc['end']),dict(name='ASMR',category='Games',platform='Unified',geo='Worldwide',period_start=sc['start'],period_end=sc['end'])]:
             self.assertEqual(w.relevance(row,sc,True)[0],'unrelated')
+    def test_geo_normalization_preserves_scope_and_other_filters(self):
+        question='ASMR games';options=dict(geo='Worldwide',platforms=['Unified'],start='2026-09-14',end='2026-10-13')
+        expected=dict(geo='Worldwide',platforms=['Unified'],product_type='games',topic='ASMR',start='2026-09-14',end='2026-10-13')
+        for mode in ('saved','overrides'):
+            for casing in ('Worldwide','WORLDWIDE','worldwide'):
+                scope=w.scope_for(question,**{mode:dict(options,geo=casing)})
+                self.assertEqual({k:scope[k] for k in expected},expected)
+        sc=w.scope_for(question,overrides=options);original_scope=dict(sc)
+        csv=dict(name='ASMR game',description='ASMR game for relaxation',category='Games',platform='Unified',geo='Worldwide',period_start=sc['start'],period_end=sc['end'])
+        public=dict(name='ASMR game',description='ASMR game for relaxation',primary_genre='Games',platform='Unified',country='Worldwide')
+        for casing in ('Worldwide','WORLDWIDE','worldwide'):
+            for row_geo in ('Worldwide','WORLDWIDE','worldwide'):
+                with self.subTest(source='csv',scope_geo=casing,row_geo=row_geo):
+                    scope=dict(sc,geo=casing);row=dict(csv,geo=row_geo);before=(dict(scope),dict(row))
+                    self.assertEqual(w.relevance(row,scope,True)[0],'relevant')
+                    self.assertEqual((scope,row),before)
+                with self.subTest(source='public',scope_geo=casing,row_geo=row_geo):
+                    self.assertEqual(w.relevance(dict(public,country=row_geo),dict(sc,geo=casing))[0],'relevant')
+        self.assertEqual(sc,original_scope)
+        for country in ('US','VN','JP','KR','GB','DE'):
+            for casing in (country,country.lower()):
+                scope=dict(sc,geo=country)
+                self.assertEqual(w.relevance(dict(csv,geo=casing),scope,True)[0],'relevant')
+                self.assertEqual(w.relevance(dict(public,country=casing),scope)[0],'relevant')
+        for row_geo,scope_geo in [('JP','US'),('US','JP'),('US','Worldwide'),('Worldwide','US'),('Worldwide','VN'),('UNKNOWN','Worldwide'),(None,'Worldwide'),('','Worldwide')]:
+            with self.subTest(row_geo=row_geo,scope_geo=scope_geo):
+                self.assertEqual(w.relevance(dict(csv,geo=row_geo),dict(sc,geo=scope_geo),True)[0],'unrelated')
+                self.assertEqual(w.relevance(dict(public,country=row_geo),dict(sc,geo=scope_geo))[0],'unrelated')
+        for platform in ('iOS','Android'):
+            self.assertEqual(w.relevance(dict(csv,platform=platform),sc,True)[0],'unrelated')
+            self.assertEqual(w.relevance(dict(public,platform=platform),sc)[0],'unrelated')
+            os_scope=dict(sc,platforms=[platform])
+            self.assertEqual(w.relevance(dict(csv,platform='Unified'),os_scope,True)[0],'unrelated')
+            self.assertEqual(w.relevance(dict(public,platform='Unified'),os_scope)[0],'unrelated')
+        csv_negatives=(
+            ('wrong category',dict(csv,category='Utilities')),
+            ('wrong topic name and description',dict(csv,name='Puzzle',description='Puzzle game')),
+            ('ends before comparison boundary',dict(csv,period_start='2026-08-01',period_end='2026-08-14')),
+            ('starts after current period',dict(csv,period_start='2026-10-14',period_end='2026-11-13')),
+            ('missing period start',dict(csv,period_start=None)),
+            ('missing period end',dict(csv,period_end=None)),
+            ('invalid period end',dict(csv,period_end='bad-date')),
+            ('reversed period',dict(csv,period_start='2026-10-13',period_end='2026-09-14')),
+        )
+        for label,bad in csv_negatives:
+            with self.subTest(source='csv',negative=label):
+                self.assertEqual(w.relevance(bad,sc,True)[0],'unrelated')
+        with self.subTest(source='public',negative='wrong topic name and description'):
+            self.assertEqual(w.relevance(dict(public,name='Puzzle',description='Puzzle game'),sc)[0],'unrelated')
+        with self.subTest(source='public',negative='wrong category'):
+            self.assertEqual(w.relevance(dict(public,primary_genre='Utilities'),sc)[0],'unrelated')
+        self.assertEqual(w.relevance(dict(csv,period_start=sc['comparison_start'],period_end=sc['comparison_end']),sc,True)[0],'relevant')
+        utilities=w.scope_for('Utilities',overrides=options)
+        self.assertEqual(w.relevance(dict(csv),utilities,True)[0],'unrelated')
+        self.assertEqual(w.scope_for(question,saved=dict(geo='worldwide',platforms=['Unified'],start='2026-09-14',end='2026-10-13'))['geo'],'Worldwide')
+        with self.assertRaises(ValueError):w.scope_for(question,saved=dict(geo='USA'))
+    def test_name_only_csv_is_possible_but_growth_is_not_eligible(self):
+        import market_intelligence as mi
+        scope=w.scope_for('ASMR games',overrides=dict(geo='Worldwide',platforms=['Unified'],start='2026-09-14',end='2026-10-13'))
+        row=dict(id='42',store_id='42',name='ASMR Test',category='Games',platform='Unified',geo='Worldwide',period_start=scope['start'],period_end=scope['end'],downloads=145000,delta_pop=45000,delta_yoy=95000,evidence_id='CSV:1:2',evidence_ids=['CSV:1:2'],kind='csv')
+        status,_=w.relevance(row,scope,True);self.assertEqual(status,'possible')
+        packet=mi.enrich(dict(evidence=[dict(row,relevance=status)],signals=[],warnings=[],coverage={},gaps=[]),scope)
+        self.assertEqual([(m['before'],m['after'],m['eligible']) for m in packet['comparisons']],[(100000,145000,False),(50000,145000,False)])
+        self.assertFalse(mi.assessment(packet,scope)['app_growth'])
+        answer=dict(schema_version='1.9.2',request_types=['growth'],direct_answer='Tăng trưởng.',sections=[],apps=[],claims=[dict(id='g',text='Tăng trưởng downloads.',kind='growth',evidence_ids=['CSV:1:2'],metric_ids=[m['id'] for m in packet['comparisons']],basis_claim_ids=[])],research_gaps=[],next_steps=[])
+        with self.assertRaises(ValueError):w.validate(answer,packet)
+    def test_imported_worldwide_unified_csv_flows_into_launch_assessment(self):
+        start,end='2026-09-14','2026-10-13'
+        import_ids={}
+        with s.con() as c:
+            for kind,fingerprint,field,delta in [('pop','a'*64,'delta_pop',45000),('yoy','b'*64,'delta_yoy',95000)]:
+                imp=s.studio.start_import(c,dict(project_id=self.pid,filename=kind.upper()+'.csv',fingerprint=fingerprint,kind=kind,period=dict(start=start,end=end,geo='Worldwide')))
+                import_ids[kind]=imp['id']
+                row=dict(id='csv42',store_id='42',name='ASMR Test',category='Games',platform='Unified',geo='Worldwide',period_start=start,period_end=end,downloads=145000,source=dict(line=2))
+                row[field]=delta;s.studio.import_batch(c,dict(import_id=imp['id'],rows=[row]));s.studio.finish_import(c,dict(import_id=imp['id'],expected=1))
+        with patch.object(w,'start_thread'):
+            result=self.start(question='ASMR games')
+        self.assertEqual(result['research_id'],self.pid)
+        self.assertEqual({k:result['scope'][k] for k in ('geo','platforms','start','end')},dict(geo='Worldwide',platforms=['Unified'],start=start,end=end))
+        with s.con() as c:packet=w.assess(c,self.pid,result['scope']);raw=s.studio.records(c,self.pid)
+        self.assertEqual({e['evidence_id'] for e in result['preview']['evidence'] if e['kind']=='csv'},{e['evidence_id'] for e in packet['evidence'] if e['kind']=='csv'})
+        self.assertEqual({(r['geo'],r['platform'],r['period_start'],r['period_end']) for r in raw},{('Worldwide','Unified',start,end)})
+        expected_refs={f"CSV:{import_ids['pop']}:2",f"CSV:{import_ids['yoy']}:2"}
+        self.assertEqual({r['source']['import_id'] for r in raw},{import_ids['pop'],import_ids['yoy']})
+        self.assertEqual({(r['source']['kind'],r['source']['filename'],r['source']['line']) for r in raw},{('pop','POP.csv',2),('yoy','YOY.csv',2)})
+        self.assertEqual([(m['before'],m['after'],m['eligible']) for m in packet['comparisons']],[(100000,145000,False),(50000,145000,False)])
+        self.assertEqual([(m['comparison_start'],m['comparison_end']) for m in packet['comparisons']],[('2026-08-15','2026-09-13'),('2025-09-14','2025-10-13')])
+        rows=[e for e in packet['evidence'] if e['kind']=='csv']
+        self.assertEqual({e['relevance'] for e in rows},{'possible'})
+        self.assertEqual({e['geo'] for e in rows},{'Worldwide'});self.assertEqual({e['platform'] for e in rows},{'Unified'})
+        self.assertEqual({e['period_start'] for e in rows},{start});self.assertEqual({e['period_end'] for e in rows},{end})
+        self.assertEqual({e['sources']['pop']['filename'] for e in rows},{'POP.csv'})
+        self.assertEqual({e['sources']['yoy']['filename'] for e in rows},{'YOY.csv'})
+        self.assertEqual({e['sources'][k]['line'] for e in rows for k in ('pop','yoy')},{2})
+        for name,evidence_rows in (('preview',result['preview']['evidence']),('assessment',packet['evidence'])):
+            with self.subTest(evidence_view=name):
+                csv_rows=[e for e in evidence_rows if e['kind']=='csv']
+                self.assertEqual(len(csv_rows),1)
+                self.assertEqual({tuple(sorted(e['evidence_ids'])) for e in csv_rows},{tuple(sorted(expected_refs))})
+                self.assertIn(csv_rows[0]['evidence_id'],expected_refs)
+                self.assertEqual(csv_rows[0]['evidence_id'],f"CSV:{import_ids['pop']}:2")
+                for e in csv_rows:
+                    self.assertEqual({k:e['sources'][k]['import_id'] for k in ('pop','yoy')},import_ids)
+                    self.assertEqual(e['field_sources']['delta_pop']['import_id'],import_ids['pop'])
+                    self.assertEqual(e['field_sources']['delta_yoy']['import_id'],import_ids['yoy'])
+                    self.assertIn(e['evidence_id'],e['evidence_ids'])
+        for name,comparison_rows in (('preview',result['preview']['comparisons']),('assessment',packet['comparisons'])):
+            with self.subTest(comparison_view=name):
+                self.assertEqual([(m['before'],m['after'],m['eligible']) for m in comparison_rows],[(100000,145000,False),(50000,145000,False)])
+                self.assertEqual([(m['comparison_start'],m['comparison_end']) for m in comparison_rows],[('2026-08-15','2026-09-13'),('2025-09-14','2025-10-13')])
+                for comparison in comparison_rows:
+                    self.assertEqual(set(comparison['evidence_ids']),expected_refs)
+                    self.assertEqual((comparison['geo'],comparison['platform']),('Worldwide','Unified'))
+        for signal in packet['signals']:
+            if signal['metric']=='estimated_downloads_delta_pop':
+                self.assertEqual(signal['evidence_ids'],[f"CSV:{import_ids['pop']}:2"])
+
+    def test_launch_reuses_saved_worldwide_unified_scope(self):
+        for casing in ('Worldwide','WORLDWIDE','worldwide'):
+            with self.subTest(geo=casing):
+                project=s.new_project({'name':'Saved ASMR '+casing,'brief':'ASMR games','category':'Games'})
+                saved=w.scope_for('ASMR games',overrides=dict(geo='Worldwide',platforms=['Unified'],start='2026-09-14',end='2026-10-13'))
+                saved['geo']=casing
+                with s.con() as c:
+                    now=w.NOW()
+                    c.execute('INSERT INTO workspace_runs(research_id,question,mode,status,scope_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',
+                              (project['id'],'ASMR games','manual','ready',w.J(saved),now,now))
+                    old_id=c.execute('SELECT last_insert_rowid()').fetchone()[0]
+                with patch.object(w,'start_thread') as start_thread:
+                    result=self.start(research_id=project['id'],question='ASMR games')
+                self.assertNotEqual(result['id'],old_id)
+                self.assertEqual(result['research_id'],project['id'])
+                self.assertEqual(result['scope']['geo'],'Worldwide')
+                self.assertEqual(result['scope']['platforms'],['Unified'])
+                self.assertEqual((result['scope']['topic'],result['scope']['product_type']),('ASMR','games'))
+                self.assertEqual((result['scope']['start'],result['scope']['end']),('2026-09-14','2026-10-13'))
+                self.assertEqual((result['scope']['comparison_start'],result['scope']['comparison_end']),('2026-08-15','2026-09-13'))
+                start_thread.assert_called_once_with(s,result['id'])
+                with s.con() as c:
+                    self.assertEqual(w.get(c,old_id)['scope'],saved)
     def test_all_candidates_assessed_not_seventy(self):
         with s.con() as c:
             studio=s.studio;studio.save_public(c,self.pid,[dict(store_id=str(i),name='ASMR '+str(i),description='ASMR game',platform='iOS',country='US',primary_genre='Games') for i in range(203)])
